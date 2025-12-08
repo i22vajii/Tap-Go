@@ -1,5 +1,7 @@
 # Tap & Go
 
+Nota: No se si os tendre que pasar la carpeta del proyecto entera... Ahora mismo esta solo lo que es el codigo
+
 ## Pasos para crear el proyecto
 
 ### Instalar flutter
