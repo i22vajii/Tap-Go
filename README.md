@@ -45,7 +45,7 @@ Abrirlo en el navegador con el puerto que te pone
 
 ---
 
-### Estructura de archivos 
+## Estructura de archivos 
 
 
 - lib/config/app_colors.dart: Contiene la clase AppColors con las constantes de color de la aplicación.
