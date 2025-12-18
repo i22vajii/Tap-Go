@@ -47,10 +47,30 @@ class QueueService {
   // 3. AVANZAR LA COLA (Para el Admin/Tienda)
   Future<void> callNext(String queueId) async {
     final queueRef = _db.collection('queues').doc(queueId);
-    
-    // Simplemente subimos el número de "A quién atendemos ahora"
-    await queueRef.update({
-      'current_number': FieldValue.increment(1),
+
+    await _db.runTransaction((transaction) async {
+      // 1. Leemos el documento primero
+      DocumentSnapshot snapshot = await transaction.get(queueRef);
+
+      if (!snapshot.exists) {
+        throw Exception("La cola no existe");
+      }
+
+      // 2. Obtenemos los valores actuales
+      // Usamos '?? 0' para evitar errores si el campo está vacío
+      int current = snapshot.get('current_number') ?? 0;
+      int lastIssued = snapshot.get('last_issued_number') ?? 0;
+
+      // 3. Validamos: Solo avanzamos si hay gente esperando
+      if (current < lastIssued) {
+        transaction.update(queueRef, {
+          'current_number': current + 1,
+        });
+      } else {
+        // Opcional: Puedes lanzar un error para avisar a la UI
+        // o simplemente no hacer nada (return)
+        throw Exception("Ya no hay más clientes en espera");
+      }
     });
   }
 }
