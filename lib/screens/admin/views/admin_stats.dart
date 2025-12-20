@@ -9,157 +9,180 @@ class AdminStatistics extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      backgroundColor: Colors.grey[100],
       appBar: AppBar(
-        title: const Text("Analítica del Negocio"),
+        title: const Text("Dashboard en Tiempo Real"),
         backgroundColor: Colors.white,
         foregroundColor: Colors.black,
         elevation: 0,
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance.collection('ofertas').snapshots(),
-        builder: (context, snapshot) {
-          if (snapshot.hasError) return const Center(child: Text("Error al cargar datos"));
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final docs = snapshot.data!.docs;
-          int totalOfertas = docs.length;
-          int activas = docs.where((d) => d['activa'] == true).length;
-          int inactivas = totalOfertas - activas;
-
-          return SingleChildScrollView(
-            padding: const EdgeInsets.all(20),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  "Estado de Ofertas",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.azulProfundo),
-                ),
-                const SizedBox(height: 20),
-                
-                // CORRECCIÓN: aspectRatio en lugar de aspectSize
-                AspectRatio(
-                  aspectRatio: 1.3, 
-                  child: PieChart(
-                    PieChartData(
-                      sectionsSpace: 2,
-                      centerSpaceRadius: 40,
-                      sections: [
-                        PieChartSectionData(
-                          value: activas.toDouble() > 0 ? activas.toDouble() : 0.1,
-                          title: 'Activas',
-                          color: AppColors.turquesaVivo,
-                          radius: 60,
-                          // CORRECCIÓN: titleStyle en lugar de titleTextStyle
-                          titleStyle: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                        PieChartSectionData(
-                          value: inactivas.toDouble() > 0 ? inactivas.toDouble() : 0.1,
-                          title: 'Inactivas',
-                          color: AppColors.alertaRojo,
-                          radius: 55,
-                          // CORRECCIÓN: titleStyle en lugar de titleTextStyle
-                          titleStyle: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-
-                const SizedBox(height: 30),
-                const Text(
-                  "Métricas Clave",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.azulProfundo),
-                ),
-                const SizedBox(height: 15),
-
-                Row(
-                  children: [
-                    _statCard("Total", totalOfertas.toString(), Icons.analytics, Colors.blue),
-                    const SizedBox(width: 15),
-                    _statCard("Activas", activas.toString(), Icons.check_circle, Colors.green),
-                  ],
-                ),
-                
-                const SizedBox(height: 30),
-                const Text(
-                  "Actividad Semanal",
-                  style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold, color: AppColors.azulProfundo),
-                ),
-                const SizedBox(height: 15),
-
-                Container(
-                  height: 200,
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.grey[50],
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: BarChart(
-                    BarChartData(
-                      gridData: const FlGridData(show: false),
-                      borderData: FlBorderData(show: false),
-                      titlesData: const FlTitlesData(show: false),
-                      barGroups: [
-                        _makeGroupData(0, 5),
-                        _makeGroupData(1, 8),
-                        _makeGroupData(2, 12),
-                        _makeGroupData(3, 7),
-                        _makeGroupData(4, 10),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          );
-        },
+      body: ListView(
+        padding: const EdgeInsets.all(16),
+        children: [
+          _buildQueueStatusSection(), // Nueva sección de Cola
+          const SizedBox(height: 24),
+          _buildOfferStatsSection(),  // Gráfico circular de Ofertas
+          const SizedBox(height: 24),
+          _buildTicketActivitySection(), // Gráfico de barras de Tickets
+        ],
       ),
     );
   }
 
-  Widget _statCard(String label, String value, IconData icon, Color color) {
+  // 1. Métrica de Cola (Basado en tu captura de 'queues')
+  Widget _buildQueueStatusSection() {
+    return StreamBuilder<DocumentSnapshot>(
+      stream: FirebaseFirestore.instance.collection('queues').doc('tienda_01').snapshots(),
+      builder: (context, snapshot) {
+        if (!snapshot.hasData) return const SizedBox();
+        var data = snapshot.data!.data() as Map<String, dynamic>;
+        
+        int actual = data['current_number'] ?? 0;
+        int total = data['last_issued_number'] ?? 0;
+        int esperando = total - actual;
+
+        return Row(
+          children: [
+            _miniStatCard("En Espera", esperando.toString(), Icons.people_outline, Colors.orange),
+            const SizedBox(width: 12),
+            _miniStatCard("Atendidos", actual.toString(), Icons.check_circle_outline, Colors.green),
+          ],
+        );
+      },
+    );
+  }
+
+  // 2. Gráfico Circular de Ofertas (Basado en tu captura de 'ofertas')
+  Widget _buildOfferStatsSection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Distribución de Ofertas", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 20),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('ofertas').snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
+              
+              int activas = snapshot.data!.docs.where((d) => d['activa'] == true).length;
+              int inactivas = snapshot.data!.docs.length - activas;
+
+              return SizedBox(
+                height: 200,
+                child: PieChart(
+                  PieChartData(
+                    sectionsSpace: 4,
+                    centerSpaceRadius: 40,
+                    sections: [
+                      PieChartSectionData(
+                        value: activas.toDouble(),
+                        title: 'Activas',
+                        color: AppColors.turquesaVivo,
+                        radius: 50,
+                        titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                      PieChartSectionData(
+                        value: inactivas.toDouble(),
+                        title: 'Off',
+                        color: AppColors.alertaRojo,
+                        radius: 45,
+                        titleStyle: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: Colors.white),
+                      ),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  // 3. Actividad de Tickets (Basado en tu captura de 'tickets')
+  Widget _buildTicketActivitySection() {
+    return Container(
+      padding: const EdgeInsets.all(20),
+      decoration: _cardDecoration(),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Text("Actividad de Tickets", style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16)),
+          const SizedBox(height: 20),
+          StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('tickets').snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) return const SizedBox();
+              
+              // Aquí contamos cuántos tickets hay por estado
+              int waiting = snapshot.data!.docs.where((d) => d['status'] == 'waiting').length;
+              
+              return SizedBox(
+                height: 150,
+                child: BarChart(
+                  BarChartData(
+                    gridData: const FlGridData(show: false),
+                    borderData: FlBorderData(show: false),
+                    titlesData: const FlTitlesData(show: false),
+                    barGroups: [
+                      _makeBarData(0, waiting.toDouble(), Colors.blue),
+                      _makeBarData(1, snapshot.data!.docs.length.toDouble(), AppColors.azulProfundo),
+                    ],
+                  ),
+                ),
+              );
+            },
+          ),
+          const Center(child: Text("Tickets esperando vs Total histórico", style: TextStyle(fontSize: 11, color: Colors.grey))),
+        ],
+      ),
+    );
+  }
+
+  // --- Helpers de Diseño ---
+
+  BoxDecoration _cardDecoration() {
+    return BoxDecoration(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(20),
+      boxShadow: [BoxShadow(color: Colors.black.withOpacity(0.03), blurRadius: 10, offset: const Offset(0, 4))],
+    );
+  }
+
+  Widget _miniStatCard(String label, String value, IconData icon, Color color) {
     return Expanded(
       child: Container(
-        padding: const EdgeInsets.all(20),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(20),
-          boxShadow: [
-            BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 10, offset: const Offset(0, 5)),
-          ],
-        ),
-        child: Column(
+        padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+        decoration: _cardDecoration(),
+        child: Row(
           children: [
-            Icon(icon, color: color, size: 30),
-            const SizedBox(height: 10),
-            Text(value, style: const TextStyle(fontSize: 24, fontWeight: FontWeight.bold)),
-            Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+            Icon(icon, color: color, size: 28),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(value, style: const TextStyle(fontSize: 20, fontWeight: FontWeight.bold)),
+                Text(label, style: const TextStyle(color: Colors.grey, fontSize: 12)),
+              ],
+            )
           ],
         ),
       ),
     );
   }
 
-  BarChartGroupData _makeGroupData(int x, double y) {
+  BarChartGroupData _makeBarData(int x, double y, Color color) {
     return BarChartGroupData(
       x: x,
       barRods: [
         BarChartRodData(
           toY: y,
-          color: AppColors.azulProfundo,
-          width: 18,
-          borderRadius: BorderRadius.circular(4),
+          color: color,
+          width: 30,
+          borderRadius: const BorderRadius.vertical(top: Radius.circular(6)),
         ),
       ],
     );

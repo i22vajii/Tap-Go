@@ -5,9 +5,9 @@
     
     <uses-feature android:name="android.hardware.nfc" android:required="true" />
     <application
-        android:label="colas_virtuales"
-        android:name="${applicationName}"
-        android:icon="@mipmap/ic_launcher">
+        android:label="Tap & Go"
+        android:name="android.app.Application"
+        android:icon="@mipmap/launcher_icon">
         <activity
             android:name=".MainActivity"
             android:exported="true"
