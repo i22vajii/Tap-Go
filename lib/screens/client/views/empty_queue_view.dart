@@ -41,48 +41,48 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
         
         onDiscovered: (NfcTag tag) async {
           try {
-            // 1. Extraemos la información NDEF (el formato estándar de datos)
-            Ndef? ndef = Ndef.from(tag);
-  
-            if (ndef == null || ndef.cachedMessage == null) {
-              // La etiqueta está vacía o no es compatible
-              throw "Etiqueta vacía o no compatible";
+            final data = tag.data as Map<String, dynamic>;
+            final ndef = data['ndef'];
+
+            if (ndef == null || ndef['cachedMessage'] == null) {
+              throw 'Etiqueta vacía o no compatible';
             }
-  
-            // 2. Leemos el primer registro (donde escribimos el texto)
-            NdefRecord record = ndef.cachedMessage!.records.first;
-  
-            // Decodificamos el texto (los payloads de texto tienen una cabecera rara)
-            // Saltamos el primer byte (idioma) y decodificamos el resto
-            String payload = utf8.decode(record.payload.sublist(1)); // Necesitas import 'dart:convert';
-  
-            // A veces el payload trae el código de lenguaje 'en' al principio, lo limpiamos si hace falta
-            // Una forma bruta pero efectiva para este ejemplo:
-            String textoLeido = payload.substring(2); // Saltamos "en" (ej: enTAPGO...)
-  
-            print("ETIQUETA LEÍDA: $textoLeido"); // Para que lo veas en consola
-  
-            // 3. COMPROBACIÓN DE SEGURIDAD
+
+            final records = ndef['cachedMessage']['records'];
+            final record = records.first;
+
+            final payload = List<int>.from(record['payload']);
+
+            // Decodificar texto NDEF
+            String textoLeido = utf8.decode(payload.sublist(1));
+
+            // Eliminar código de idioma ("en", "es", etc.)
+            if (textoLeido.length > 2) {
+              textoLeido = textoLeido.substring(2);
+            }
+
+            print('ETIQUETA LEÍDA: $textoLeido');
+
             if (textoLeido.contains("TAPGO_TIENDA_01")) {
-              // ¡ES NUESTRA ETIQUETA!
               await NfcManager.instance.stopSession();
               if (mounted) {
                 setState(() => _isScanning = false);
-                _handleJoin(); // Unirse a la cola
+                _handleJoin();
               }
             } else {
-              // ES UNA ETIQUETA DESCONOCIDA (ej: Tarjeta del Bus)
-              throw "Etiqueta no válida para Tap-Go";
+              throw 'Etiqueta no válida para Tap-Go';
             }
-  
+
           } catch (e) {
-            await NfcManager.instance.stopSession(); // Importante: stopSession sin msg en Android
+            await NfcManager.instance.stopSession();
             if (mounted) {
-               setState(() => _isScanning = false);
-               _showError("Error: $e");
+              setState(() => _isScanning = false);
+              _showError("Error NFC: $e");
             }
           }
-        },      
+        },
+
+            
       );
     } catch (e) {
       if (mounted) {
