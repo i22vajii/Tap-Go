@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "320679082222",
+    "project_id": "colas-virtuales",
+    "storage_bucket": "colas-virtuales.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:320679082222:android:f62515901221c1cd8d5bff",
+        "android_client_info": {
+          "package_name": "com.example.colas_virtuales"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyD6xdIDkRXLVGbcq2CTaluJIZ-fWmlyV8s"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
