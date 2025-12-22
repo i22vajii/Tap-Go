@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:nfc_manager/nfc_manager.dart'; // 1. Importamos el paquete NFC
+import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
 import '../../../config/app_colors.dart';
 import 'dart:convert';
 
@@ -19,8 +20,8 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
   // Función para iniciar el escaneo (CORREGIDA FINAL)
   void _startNfcScan() async {
     // 1. Comprobar si el dispositivo soporta NFC
-    bool isAvailable = await NfcManager.instance.isAvailable();
-    if (!isAvailable) {
+    NfcAvailability availability = await NfcManager.instance.checkAvailability();
+    if (availability != NfcAvailability.enabled) {
       _showError("El NFC está desactivado o no disponible en este dispositivo.");
       return;
     }
@@ -41,17 +42,20 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
         
         onDiscovered: (NfcTag tag) async {
           try {
-            final data = tag.data as Map<String, dynamic>;
-            final ndef = data['ndef'];
+            final ndef = Ndef.from(tag);
+            if (ndef == null) {
+              throw 'No es un tag NDEF';
+            }
+            final ndefMessage = ndef.cachedMessage;
 
-            if (ndef == null || ndef['cachedMessage'] == null) {
+            if (ndefMessage == null) {
               throw 'Etiqueta vacía o no compatible';
             }
 
-            final records = ndef['cachedMessage']['records'];
+            final records = ndefMessage.records;
             final record = records.first;
 
-            final payload = List<int>.from(record['payload']);
+            final payload = List<int>.from(record.payload);
 
             // Decodificar texto NDEF
             String textoLeido = utf8.decode(payload.sublist(1));

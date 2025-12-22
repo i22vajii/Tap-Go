@@ -24,6 +24,8 @@ dependencies:
   
   # Hardware
   nfc_manager: ^4.1.1
+  nfc_manager_ndef: ^1.1.0
+  intl: ^0.20.2
 
 dev_dependencies:
   flutter_test:
