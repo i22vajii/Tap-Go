@@ -1,7 +1,8 @@
 import 'package:flutter/material.dart';
 import 'views/admin_queue_control.dart';
 import 'views/admin_offers_manager.dart';
-import 'views/admin_stats.dart'; // Asegúrate de crear este archivo
+import 'views/admin_stats.dart';
+import 'views/admin_parking_validator.dart'; // 1. IMPORTA EL NUEVO ARCHIVO
 import '../../config/app_colors.dart';
 
 class AdminRootScreen extends StatefulWidget {
@@ -13,11 +14,11 @@ class AdminRootScreen extends StatefulWidget {
 class _AdminRootScreenState extends State<AdminRootScreen> {
   int _currentIndex = 0;
 
-  // 1. Añadimos la nueva página a la lista
   final List<Widget> _adminPages = [
     const AdminQueueControl(),
     const AdminOffersManager(),
-    const AdminStatistics(), // Nueva página
+    const AdminParkingValidator(), // 2. AÑADIMOS LA PANTALLA AQUÍ
+    const AdminStatistics(),
   ];
 
   @override
@@ -28,21 +29,25 @@ class _AdminRootScreenState extends State<AdminRootScreen> {
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),
         selectedItemColor: AppColors.azulProfundo,
-        unselectedItemColor: Colors.grey, // Opcional: para mejorar visibilidad
-        type: BottomNavigationBarType.fixed, // Mantiene los iconos estables si son más de 3
+        unselectedItemColor: Colors.grey,
+        type: BottomNavigationBarType.fixed, // Importante para >3 iconos
         items: const [
           BottomNavigationBarItem(
             icon: Icon(Icons.dvr), 
-            label: 'Control Cola'
+            label: 'Cola'
           ),
           BottomNavigationBarItem(
             icon: Icon(Icons.local_offer), 
-            label: 'Gestión Ofertas'
+            label: 'Ofertas'
           ),
-          // 2. Añadimos el nuevo botón en la barra
+          // 3. NUEVO BOTÓN PARKING
+          BottomNavigationBarItem(
+            icon: Icon(Icons.local_parking_rounded), 
+            label: 'Parking'
+          ),
           BottomNavigationBarItem(
             icon: Icon(Icons.bar_chart), 
-            label: 'Estadísticas'
+            label: 'Stats'
           ),
         ],
       ),
