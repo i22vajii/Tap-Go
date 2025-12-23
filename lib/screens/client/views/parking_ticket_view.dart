@@ -1,9 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // 1. IMPORTAR AUTH
+import 'package:firebase_auth/firebase_auth.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:intl/intl.dart';
+import 'dart:convert';
+// Paquetes
+import 'package:nfc_manager/nfc_manager.dart';
+import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
+
+// Importaciones propias (Asegúrate que las rutas coinciden con tu proyecto)
 import '../../../config/app_colors.dart';
+import '../../../services/parking_service.dart';
+import '../../common/qr_scanner_screen.dart';
 
 class ParkingTicketView extends StatefulWidget {
   const ParkingTicketView({super.key});
@@ -13,102 +21,281 @@ class ParkingTicketView extends StatefulWidget {
 }
 
 class _ParkingTicketViewState extends State<ParkingTicketView> {
-  String? _currentTicketId;
-
-  // --- LÓGICA DE BASE DE DATOS ---
+  // Instancia del servicio
+  final ParkingService _parkingService = ParkingService();
   
-  Future<void> _simularEntradaParking() async {
-    try {
-      // 2. OBTENER EL USUARIO REAL AUTOMÁTICAMENTE
-      User? usuarioActual = FirebaseAuth.instance.currentUser;
-      
-      // Si no hay usuario logueado (raro si ya entraste a la app), usamos "anonimo"
-      String uid = usuarioActual?.uid ?? 'usuario_invitado';
+  String? _currentTicketId;
+  bool _isLoading = false;
+  bool _isScanningNfc = false;
+  bool _buscandoTicketInicial = true;
 
-      DocumentReference ref = await FirebaseFirestore.instance.collection('tickets_parking').add({
-        'matricula': '1234 KLM',
-        'entrada': FieldValue.serverTimestamp(),
-        'estado': 'pendiente',
-        'coste': 0.0,
-        'usuario_uid': uid, // 3. AHORA SE GUARDA EL ID REAL
-      });
-
-      setState(() {
-        _currentTicketId = ref.id;
-      });
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error de conexión: $e")));
-    }
-  }
-
-  // 2. Simular Salida: Resetea la pantalla
-  void _salirDelParking() {
-    setState(() {
-      _currentTicketId = null;
-    });
+  @override
+  void initState() {
+    super.initState();
+    _inicializarVista();
   }
 
   @override
+  void dispose() {
+    NfcManager.instance.stopSession();
+    super.dispose();
+  }
+
+  // --- 1. LÓGICA DE INICIO ---
+  Future<void> _inicializarVista() async {
+    
+    await Future.delayed(const Duration(milliseconds: 100)); // Pequeña pausa para suavidad UI
+
+    if (mounted) {
+      setState(() {
+        _currentTicketId = null; 
+        _buscandoTicketInicial = false;
+      });
+    }
+  }
+
+  // --- 2. LÓGICA DE ESCANEO ---
+  
+  // Método centralizado que llama al servicio
+  Future<void> _procesarEntrada(String gateId) async {
+    setState(() => _isLoading = true);
+    
+    User? usuarioActual = FirebaseAuth.instance.currentUser;
+    String uid = usuarioActual?.uid ?? 'usuario_invitado';
+
+    try {
+      // Llamamos al servicio para crear el ticket
+      String newTicketId = await _parkingService.checkIn(uid, gateId, '1234 KLM');
+
+      if (mounted) {
+        setState(() {
+          _currentTicketId = newTicketId;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showError("Error al generar ticket: $e");
+      }
+    }
+  }
+
+  void _startQrScan() async {
+    // Navegamos a la pantalla de escáner separada
+    final codigo = await Navigator.of(context).push(
+      MaterialPageRoute(builder: (context) => const QrScannerScreen()),
+    );
+
+    if (codigo != null && codigo is String) {
+      _procesarEntrada(codigo);
+    }
+  }
+
+  void _startNfcScan() async {
+    bool isAvailable = await NfcManager.instance.isAvailable();
+    if (!isAvailable) {
+      _showError("NFC no disponible o desactivado.");
+      return;
+    }
+
+    setState(() => _isScanningNfc = true);
+
+    try {
+      await NfcManager.instance.startSession(
+        pollingOptions: {NfcPollingOption.iso14443, NfcPollingOption.iso15693, NfcPollingOption.iso18092},
+        onDiscovered: (NfcTag tag) async {
+          try {
+            final ndef = Ndef.from(tag);
+            if (ndef == null) throw 'No es un tag NDEF';
+            final ndefMessage = ndef.cachedMessage;
+            if (ndefMessage == null) throw 'Etiqueta vacía';
+
+            final record = ndefMessage.records.first;
+            final payload = List<int>.from(record.payload);
+            String textoLeido = utf8.decode(payload.sublist(1));
+
+            if (textoLeido.length > 2) textoLeido = textoLeido.substring(2);
+
+            await NfcManager.instance.stopSession();
+            
+            if (mounted) {
+              setState(() => _isScanningNfc = false);
+              _procesarEntrada(textoLeido);
+            }
+          } catch (e) {
+            await NfcManager.instance.stopSession();
+            if (mounted) {
+              setState(() => _isScanningNfc = false);
+              _showError("Error leyendo etiqueta NFC.");
+            }
+          }
+        },
+      );
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isScanningNfc = false);
+        _showError("Error NFC: $e");
+      }
+    }
+  }
+
+  // --- 3. LÓGICA DE SALIDA ---
+  void _salirDelParking() async {
+    setState(() => _isLoading = true); 
+
+    try {
+      // 1. IMPORTANTE: Cerrar ticket en Firebase para que no vuelva a salir
+      if (_currentTicketId != null) {
+        await _parkingService.checkOut(_currentTicketId!);
+      }
+      
+      // 2. Reseteamos la vista local
+      if (mounted) {
+        setState(() {
+          _currentTicketId = null;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showError("Error al salir: $e");
+        // Forzamos la salida local aunque falle la red para no bloquear al usuario
+        setState(() => _currentTicketId = null);
+      }
+    }
+  }
+
+  void _showError(String msg) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(msg), backgroundColor: Colors.red),
+    );
+  }
+
+  // --- UI PRINCIPAL ---
+  @override
   Widget build(BuildContext context) {
+    if (_buscandoTicketInicial) {
+      return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    }
+
     return Scaffold(
       appBar: AppBar(title: const Text("Mi Parking")),
       backgroundColor: AppColors.grisHielo,
       body: _currentTicketId == null 
-          ? _buildEntradaView() 
-          : _buildTicketActivoView(),
+          ? _buildScannerView()
+          : _buildActiveTicketView(),
     );
   }
 
-  // --- VISTA A: SIN TICKET (Botón para entrar) ---
-  Widget _buildEntradaView() {
+  // --- VISTA A: ESCÁNER ---
+  Widget _buildScannerView() {
+    // Texto e iconos dinámicos según estado
+    String nfcText = _isScanningNfc ? "ACERCA EL MÓVIL..." : "ENTRAR CON NFC";
+    IconData nfcIcon = _isScanningNfc ? Icons.wifi_tethering : Icons.nfc;
+    if (_isLoading) nfcText = "GENERANDO TICKET...";
+
     return Center(
       child: Padding(
         padding: const EdgeInsets.all(24.0),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
-            Icon(Icons.local_parking_rounded, size: 100, color: AppColors.azulProfundo.withOpacity(0.5)),
-            const SizedBox(height: 20),
-            const Text(
-              "Bienvenido al Parking",
-              style: TextStyle(fontSize: 24, fontWeight: FontWeight.bold, color: AppColors.azulMedianoche),
+            AnimatedContainer(
+              duration: const Duration(milliseconds: 300),
+              padding: const EdgeInsets.all(20),
+              decoration: BoxDecoration(
+                color: _isScanningNfc ? AppColors.turquesaVivo.withOpacity(0.1) : Colors.white,
+                shape: BoxShape.circle,
+                boxShadow: _isScanningNfc ? [] : [
+                  BoxShadow(color: Colors.black.withOpacity(0.05), blurRadius: 20, offset: const Offset(0, 10))
+                ]
+              ),
+              child: Icon(
+                Icons.local_parking_rounded,
+                size: 80,
+                color: _isScanningNfc ? AppColors.turquesaVivo : AppColors.azulProfundo,
+              ),
             ),
-            const SizedBox(height: 10),
+            const SizedBox(height: 32),
+            Text(
+              _isScanningNfc ? "Buscando barrera..." : "Bienvenido al Parking",
+              style: const TextStyle(color: AppColors.azulMedianoche, fontSize: 24, fontWeight: FontWeight.bold),
+            ),
+            const SizedBox(height: 12),
             const Text(
-              "Pulsa el botón para simular que escaneas el NFC de la barrera de entrada.",
+              "Acerca tu móvil al punto NFC o escanea\nel código QR para entrar.",
               textAlign: TextAlign.center,
-              style: TextStyle(color: Colors.grey),
+              style: TextStyle(color: Colors.grey, fontSize: 16),
             ),
-            const SizedBox(height: 40),
+            const SizedBox(height: 48),
+
+            // Botón NFC
             SizedBox(
               width: double.infinity,
               height: 56,
               child: ElevatedButton.icon(
-                icon: const Icon(Icons.nfc, color: Colors.white),
-                label: const Text("SIMULAR ENTRADA NFC", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.turquesaVivo,
+                  backgroundColor: _isScanningNfc ? AppColors.turquesaVivo : AppColors.azulProfundo,
                   shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                 ),
-                onPressed: _simularEntradaParking,
+                onPressed: (_isLoading || _isScanningNfc) ? null : _startNfcScan,
+                icon: _isLoading
+                    ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
+                    : Icon(nfcIcon, color: Colors.white),
+                label: Text(nfcText, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
+            const SizedBox(height: 16),
+
+            // Botón QR
+            if (!_isLoading && !_isScanningNfc)
+              SizedBox(
+                width: double.infinity,
+                height: 56,
+                child: OutlinedButton.icon(
+                  style: OutlinedButton.styleFrom(
+                    side: BorderSide(color: AppColors.azulProfundo, width: 2),
+                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  ),
+                  onPressed: _startQrScan,
+                  icon: Icon(Icons.qr_code_scanner, color: AppColors.azulProfundo),
+                  label: const Text("ESCANEAR CÓDIGO QR", style: TextStyle(color: AppColors.azulProfundo, fontSize: 16, fontWeight: FontWeight.bold)),
+                ),
+              ),
+              
+            if (_isScanningNfc)
+              Padding(
+                padding: const EdgeInsets.only(top: 16.0),
+                child: TextButton(
+                  onPressed: () async {
+                    await NfcManager.instance.stopSession();
+                    setState(() => _isScanningNfc = false);
+                  },
+                  child: const Text("Cancelar escaneo", style: TextStyle(color: Colors.grey)),
+                ),
+              )
           ],
         ),
       ),
     );
   }
 
-  // --- VISTA B: TICKET ACTIVO (Escuchando cambios en tiempo real) ---
-  Widget _buildTicketActivoView() {
+  // --- VISTA B: TICKET ACTIVO ---
+  Widget _buildActiveTicketView() {
+    // Usamos el servicio para obtener el stream
     return StreamBuilder<DocumentSnapshot>(
-      stream: FirebaseFirestore.instance.collection('tickets_parking').doc(_currentTicketId).snapshots(),
+      stream: _parkingService.getTicketStream(_currentTicketId!),
       builder: (context, snapshot) {
         if (snapshot.hasError) return const Center(child: Text("Error al cargar ticket"));
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         
         if (!snapshot.data!.exists) {
-          return const Center(child: Text("El ticket ha sido eliminado"));
+           WidgetsBinding.instance.addPostFrameCallback((_) {
+             if(mounted) setState(() => _currentTicketId = null);
+           });
+           return const Center(child: Text("Ticket finalizado"));
         }
 
         var data = snapshot.data!.data() as Map<String, dynamic>;
@@ -166,19 +353,13 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                             ),
                           ),
                           const SizedBox(height: 8),
-                          Text(
-                            isValidado ? "¡Buen viaje!" : "Muestra este QR al salir", 
-                            style: const TextStyle(fontSize: 12, color: Colors.grey)
-                          ),
-                          
+                          Text(isValidado ? "¡Buen viaje!" : "Muestra este QR al salir", style: const TextStyle(fontSize: 12, color: Colors.grey)),
                           const Divider(height: 40),
-                          
                           _row("Matrícula", data['matricula'] ?? "---"),
                           const SizedBox(height: 10),
                           _row("Hora Entrada", DateFormat('HH:mm').format(fechaEntrada)),
                           const SizedBox(height: 10),
                           _row("Tiempo aprox.", tiempoTexto),
-                          
                           const Divider(height: 40),
                           
                           Row(
@@ -191,13 +372,7 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                                   color: isValidado ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(20)
                                 ),
-                                child: Text(
-                                  estado.toUpperCase(),
-                                  style: TextStyle(
-                                    color: isValidado ? Colors.green : Colors.orange,
-                                    fontWeight: FontWeight.bold
-                                  ),
-                                ),
+                                child: Text(estado.toUpperCase(), style: TextStyle(color: isValidado ? Colors.green : Colors.orange, fontWeight: FontWeight.bold)),
                               )
                             ],
                           )
@@ -207,9 +382,7 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                   ],
                 ),
               ),
-              
               const SizedBox(height: 30),
-              
               if (isValidado) 
                 SizedBox(
                   width: double.infinity,

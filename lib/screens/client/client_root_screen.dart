@@ -24,14 +24,12 @@ class _ClientRootScreenState extends State<ClientRootScreen> {
   // Propiedad calculada para saber si estamos en cola (si hay ID, estamos en cola)
   bool get _isInQueue => _currentQueueId != null && _myTicketNumber != null;
 
-  // CAMBIO 2: La función ahora es 'async' y llama al backend real
-  Future<void> _joinQueue() async {
+  // CAMBIO 2: La función ahora acepta el queueId como parámetro
+  Future<void> _joinQueue(String queueId) async {
     try {
-      // ID de la cola (esto vendría del NFC en el futuro, ahora lo ponemos fijo para probar)
-      String queueId = 'tienda_01'; 
       String userId = 'usuario_demo_1'; // ID temporal
 
-      // Llamamos a Firebase
+      // Llamamos a Firebase con el queueId proporcionado
       int ticket = await QueueService().joinQueue(queueId, userId);
 
       // Actualizamos la pantalla con los datos recibidos
@@ -73,7 +71,10 @@ class _ClientRootScreenState extends State<ClientRootScreen> {
     ];
 
     return Scaffold(
-      body: pages[_currentIndex],
+      body: IndexedStack(
+        index: _currentIndex,
+        children: pages,
+      ),
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: _currentIndex,
         onTap: (index) => setState(() => _currentIndex = index),

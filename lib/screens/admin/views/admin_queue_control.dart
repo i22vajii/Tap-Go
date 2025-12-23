@@ -1,20 +1,71 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../../config/app_colors.dart';
-// Asegúrate de importar tu servicio
-import '../../../services/queue_service.dart'; 
 
-class AdminQueueControl extends StatelessWidget {
+class AdminQueueControl extends StatefulWidget {
   const AdminQueueControl({super.key});
 
-  // ID de la cola que gestiona este Admin (Hardcoded para la demo)
-  final String queueId = 'tienda_01';
+  @override
+  State<AdminQueueControl> createState() => _AdminQueueControlState();
+}
+
+class _AdminQueueControlState extends State<AdminQueueControl> {
+  String? _shopId; // El ID ya no es fijo, se carga dinámicamente
+  bool _isLoading = true;
+  String? _errorMessage;
+
+  @override
+  void initState() {
+    super.initState();
+    _cargarDatosDelLocal();
+  }
+
+  // 1. Obtener el ID de la tienda del dueño logueado
+  Future<void> _cargarDatosDelLocal() async {
+    try {
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) throw "No hay sesión activa";
+
+      final doc = await FirebaseFirestore.instance.collection('owners').doc(user.uid).get();
+      
+      if (!doc.exists) {
+        throw "Usuario no registrado como dueño en la BD";
+      }
+
+      setState(() {
+        _shopId = doc.data()?['shopID']; // Ej: "cafeteria_central"
+        _isLoading = false;
+      });
+    } catch (e) {
+      setState(() {
+        _errorMessage = e.toString();
+        _isLoading = false;
+      });
+    }
+  }
+
+  // 2. Función para avanzar turno (Directa a Firebase)
+  Future<void> _llamarSiguiente(int currentNumber) async {
+    if (_shopId == null) return;
+    
+    // Solo actualizamos el número actual. 
+    // El 'waitingCount' se calcula solo (total - actual).
+    await FirebaseFirestore.instance.collection('queues').doc(_shopId).update({
+      'current_number': currentNumber + 1,
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
+    // Estados de carga y error iniciales
+    if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
+    if (_errorMessage != null) return Scaffold(body: Center(child: Text("Error: $_errorMessage")));
+    if (_shopId == null) return const Scaffold(body: Center(child: Text("No tienes tienda asignada")));
+
     return Scaffold(
       appBar: AppBar(
-        title: const Text("Gestión de Cola"),
+        title: Text(" $_shopId"), // Mostramos el ID real
         actions: const [
           Padding(
             padding: EdgeInsets.only(right: 16),
@@ -25,23 +76,37 @@ class AdminQueueControl extends StatelessWidget {
           )
         ],
       ),
-      // ESCUCHAMOS LA BASE DE DATOS EN VIVO
+      // ESCUCHAMOS LA COLA ESPECÍFICA DE ESTE LOCAL
       body: StreamBuilder<DocumentSnapshot>(
-        stream: QueueService().getQueueStream(queueId),
+        stream: FirebaseFirestore.instance.collection('queues').doc(_shopId).snapshots(),
         builder: (context, snapshot) {
           
-          // 1. Estado de Carga
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
-          if (!snapshot.data!.exists) return const Center(child: Text("Cola no iniciada"));
+          
+          // Si el documento de la cola no existe, damos opción a crearlo
+          if (!snapshot.data!.exists) {
+            return Center(
+              child: ElevatedButton(
+                onPressed: () {
+                  FirebaseFirestore.instance.collection('queues').doc(_shopId).set({
+                    'current_number': 0,
+                    'last_issued_number': 0,
+                  });
+                }, 
+                child: const Text("INICIAR SISTEMA DE COLA")
+              ),
+            );
+          }
 
-          // 2. Extraer Datos
-          var data = snapshot.data!;
+          var data = snapshot.data!.data() as Map<String, dynamic>;
+          
+          // Usamos tus nombres de campos:
           int current = data['current_number'] ?? 0;
           int lastIssued = data['last_issued_number'] ?? 0;
           
-          // Calculamos cuántos hay esperando (Total tickets dados - Ticket actual)
+          // Calculamos esperando
           int waitingCount = (lastIssued - current);
-          if (waitingCount < 0) waitingCount = 0; // Por seguridad
+          if (waitingCount < 0) waitingCount = 0;
 
           return Column(
             children: [
@@ -53,7 +118,7 @@ class AdminQueueControl extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
                     _stat(waitingCount.toString(), "Esperando"),
-                    _stat("2m", "T. Medio"), // Dato simulado por ahora
+                    _stat("2m", "T. Medio"),
                     _stat(current.toString(), "Atendidos")
                   ],
                 ),
@@ -81,7 +146,7 @@ class AdminQueueControl extends StatelessWidget {
                           child: Column(
                             children: [
                               Text(
-                                "#$current", // Mostramos dato real
+                                "#$current",
                                 style: const TextStyle(fontSize: 72, fontWeight: FontWeight.bold, color: AppColors.azulMedianoche)
                               ),
                               const SizedBox(height: 20),
@@ -92,22 +157,16 @@ class AdminQueueControl extends StatelessWidget {
                                 height: 60,
                                 child: ElevatedButton(
                                   style: ElevatedButton.styleFrom(backgroundColor: AppColors.turquesaVivo),
-                                  onPressed: () {
-                                    // ACCIÓN: Avanzar cola en Firebase
-                                    QueueService().callNext(queueId);
-                                  },
+                                  onPressed: () => _llamarSiguiente(current),
                                   child: const Text("LLAMAR AL SIGUIENTE", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
                                 ),
                               ),
                               
                               const SizedBox(height: 10),
                               
-                              // Botón No Presentado (Por ahora hace lo mismo, avanza)
+                              // Botón No Presentado
                               OutlinedButton(
-                                onPressed: () {
-                                  QueueService().callNext(queueId);
-                                  // Aquí podrías añadir lógica extra para marcarlo como "skipped" en el futuro
-                                },
+                                onPressed: () => _llamarSiguiente(current), // Avanza igual
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: AppColors.alertaRojo,
                                   side: const BorderSide(color: AppColors.alertaRojo)
@@ -120,10 +179,10 @@ class AdminQueueControl extends StatelessWidget {
                         
                         const SizedBox(height: 30),
                         
-                        // Lista de siguientes (Simulación visual basada en el actual)
+                        // Lista de siguientes
                         const Align(alignment: Alignment.centerLeft, child: Text("Siguientes:", style: TextStyle(fontWeight: FontWeight.bold))),
                         if (waitingCount > 0) _next("#${current + 1}", "Prepárate"),
-                        if (waitingCount > 1) _next("#${current + 2}", "En 4 min"),
+                        if (waitingCount > 1) _next("#${current + 2}", "En espera"),
                         if (waitingCount == 0) const Padding(padding: EdgeInsets.only(top:20), child: Text("No hay nadie más en la cola", style: TextStyle(color: Colors.grey))),
                       ]
                     )

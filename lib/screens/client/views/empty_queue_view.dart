@@ -6,7 +6,7 @@ import '../../../config/app_colors.dart';
 import 'dart:convert';
 
 class EmptyQueueView extends StatefulWidget {
-  final Future<void> Function() onJoin;
+  final Future<void> Function(String queueId) onJoin;
 
   const EmptyQueueView({super.key, required this.onJoin});
 
@@ -22,13 +22,14 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
   void _validateAndJoin(String codigoLeido) async {
     print('CÓDIGO PROCESADO: $codigoLeido');
     
-    if (codigoLeido.contains("TAPGO_TIENDA_01")) {
+    // Asumimos que el código leído es directamente el ID de la tienda (ej: "tienda_01")
+    if (codigoLeido.isNotEmpty && codigoLeido.startsWith("tienda_")) {
       if (mounted) {
         setState(() => _isScanningNfc = false);
-        _handleJoin();
+        _handleJoin(codigoLeido);
       }
     } else {
-      _showError("El código no es válido para esta tienda.");
+      _showError("El código no es válido. Debe ser un ID de tienda válido.");
     }
   }
 
@@ -98,10 +99,10 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
     }
   }
 
-  void _handleJoin() async {
+  void _handleJoin(String queueId) async {
     setState(() => _isLoading = true);
     try {
-      await widget.onJoin();
+      await widget.onJoin(queueId);
     } catch (e) {
       _showError("Error al unirse: $e");
     } finally {
