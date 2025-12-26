@@ -4,8 +4,7 @@ class ParkingService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
   final String collection = 'tickets_parking';
 
-  // 1. BUSCAR TICKET ACTIVO (Para saber si el usuario ya está dentro)
-  // Devuelve el ID del ticket si existe, o null si no.
+  // 1. BUSCAR TICKET ACTIVO
   Future<String?> findActiveTicketId(String userId) async {
     try {
       QuerySnapshot snapshot = await _db
@@ -25,30 +24,27 @@ class ParkingService {
     }
   }
 
-  // 2. OBTENER STREAM DEL TICKET (Para ver cambios en tiempo real: validado/pagado)
+  // 2. OBTENER STREAM DEL TICKET
   Stream<DocumentSnapshot> getTicketStream(String ticketId) {
     return _db.collection(collection).doc(ticketId).snapshots();
   }
 
-  // 3. ENTRAR AL PARKING (Crear Ticket)
-  Future<String> checkIn(String userId, String gateId, String matricula) async {
-    // Referencia al nuevo documento
+  // 3. ENTRAR AL PARKING
+  // shop_id ya viene limpio desde la vista (sin "parking_")
+  Future<String> checkIn(String shop_id) async {
     DocumentReference ref = _db.collection(collection).doc(); 
 
     await ref.set({
-      'matricula': matricula,
       'entrada': FieldValue.serverTimestamp(),
-      'estado': 'pendiente', // Estados: pendiente, validado, pagado, finalizado
+      'estado': 'pendiente', 
       'coste': 0.0,
-      'usuario_uid': userId,
-      'gate_id': gateId, // "Puerta Norte", "Sótano 1", etc.
+      'shopID': shop_id.trim(), // Aseguramos limpieza
     });
 
-    return ref.id; // Devolvemos el ID del ticket creado
+    return ref.id;
   }
 
-  // 4. SALIR DEL PARKING (Finalizar Demo)
-  // En una app real, esto sucedería al salir por la barrera
+  // 4. SALIR DEL PARKING
   Future<void> checkOut(String ticketId) async {
     await _db.collection(collection).doc(ticketId).update({
       'estado': 'finalizado',

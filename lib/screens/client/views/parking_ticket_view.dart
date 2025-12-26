@@ -4,11 +4,13 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
+import 'dart:async';
+
 // Paquetes
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
 
-// Importaciones propias (Asegúrate que las rutas coinciden con tu proyecto)
+// Importaciones propias (Asegúrate que estas rutas coinciden con tu proyecto)
 import '../../../config/app_colors.dart';
 import '../../../services/parking_service.dart';
 import '../../common/qr_scanner_screen.dart';
@@ -21,30 +23,37 @@ class ParkingTicketView extends StatefulWidget {
 }
 
 class _ParkingTicketViewState extends State<ParkingTicketView> {
-  // Instancia del servicio
   final ParkingService _parkingService = ParkingService();
   
   String? _currentTicketId;
   bool _isLoading = false;
   bool _isScanningNfc = false;
   bool _buscandoTicketInicial = true;
+  Timer? _timer;
 
   @override
   void initState() {
     super.initState();
     _inicializarVista();
+    
+    // Timer para actualizar la duración cada 30s
+    _timer = Timer.periodic(const Duration(seconds: 30), (timer) {
+      if (mounted && _currentTicketId != null) {
+        setState(() {});
+      }
+    });
   }
 
   @override
   void dispose() {
+    _timer?.cancel();
     NfcManager.instance.stopSession();
     super.dispose();
   }
 
   // --- 1. LÓGICA DE INICIO ---
   Future<void> _inicializarVista() async {
-    
-    await Future.delayed(const Duration(milliseconds: 100)); // Pequeña pausa para suavidad UI
+    await Future.delayed(const Duration(milliseconds: 100)); 
 
     if (mounted) {
       setState(() {
@@ -54,18 +63,37 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     }
   }
 
-  // --- 2. LÓGICA DE ESCANEO ---
+  // --- 2. LÓGICA DE ESCANEO Y VALIDACIÓN ---
   
-  // Método centralizado que llama al servicio
-  Future<void> _procesarEntrada(String gateId) async {
+  // AQUI ESTÁ EL CAMBIO PRINCIPAL
+  Future<void> _procesarEntrada(String rawData) async {
+    // 1. Limpieza básica
+    String codigoLimpio = rawData.trim();
+
+    // 2. VALIDACIÓN: Debe contener el prefijo 'parking_'
+    if (!codigoLimpio.startsWith('parking_')) {
+      _showError("Código inválido. Escanee un código de Parking.");
+      return; // Detenemos la ejecución aquí
+    }
+
+    // 3. EXTRACCIÓN: Quitamos 'parking_' para obtener solo el ID (ej: tienda_01)
+    String shopId = codigoLimpio.replaceFirst('parking_', '');
+
+    if (shopId.isEmpty) {
+      _showError("El código QR/NFC no contiene un ID de tienda.");
+      return;
+    }
+
+    // Si pasa las validaciones, procedemos
     setState(() => _isLoading = true);
     
     User? usuarioActual = FirebaseAuth.instance.currentUser;
+    // ignore: unused_local_variable
     String uid = usuarioActual?.uid ?? 'usuario_invitado';
 
     try {
-      // Llamamos al servicio para crear el ticket
-      String newTicketId = await _parkingService.checkIn(uid, gateId, '1234 KLM');
+      // Enviamos solo el ID limpio al servicio
+      String newTicketId = await _parkingService.checkIn(shopId);
 
       if (mounted) {
         setState(() {
@@ -82,7 +110,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
   }
 
   void _startQrScan() async {
-    // Navegamos a la pantalla de escáner separada
     final codigo = await Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => const QrScannerScreen()),
     );
@@ -113,14 +140,17 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
 
             final record = ndefMessage.records.first;
             final payload = List<int>.from(record.payload);
+            
+            // Decodificación estándar de NDEF Text Record
             String textoLeido = utf8.decode(payload.sublist(1));
-
+            // Eliminar código de lenguaje (ej: "en")
             if (textoLeido.length > 2) textoLeido = textoLeido.substring(2);
 
             await NfcManager.instance.stopSession();
             
             if (mounted) {
               setState(() => _isScanningNfc = false);
+              // Enviamos el texto crudo a procesar
               _procesarEntrada(textoLeido);
             }
           } catch (e) {
@@ -145,12 +175,10 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     setState(() => _isLoading = true); 
 
     try {
-      // 1. IMPORTANTE: Cerrar ticket en Firebase para que no vuelva a salir
       if (_currentTicketId != null) {
         await _parkingService.checkOut(_currentTicketId!);
       }
       
-      // 2. Reseteamos la vista local
       if (mounted) {
         setState(() {
           _currentTicketId = null;
@@ -161,7 +189,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
       if (mounted) {
         setState(() => _isLoading = false);
         _showError("Error al salir: $e");
-        // Forzamos la salida local aunque falle la red para no bloquear al usuario
         setState(() => _currentTicketId = null);
       }
     }
@@ -191,10 +218,9 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
 
   // --- VISTA A: ESCÁNER ---
   Widget _buildScannerView() {
-    // Texto e iconos dinámicos según estado
     String nfcText = _isScanningNfc ? "ACERCA EL MÓVIL..." : "ENTRAR CON NFC";
     IconData nfcIcon = _isScanningNfc ? Icons.wifi_tethering : Icons.nfc;
-    if (_isLoading) nfcText = "GENERANDO TICKET...";
+    if (_isLoading) nfcText = "VALIDANDO CÓDIGO...";
 
     return Center(
       child: Padding(
@@ -220,12 +246,12 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
             ),
             const SizedBox(height: 32),
             Text(
-              _isScanningNfc ? "Buscando barrera..." : "Bienvenido al Parking",
+              _isScanningNfc ? "Buscando etiqueta..." : "Bienvenido al Parking",
               style: const TextStyle(color: AppColors.azulMedianoche, fontSize: 24, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             const Text(
-              "Acerca tu móvil al punto NFC o escanea\nel código QR para entrar.",
+              "Usa NFC o QR del parking para registrar tu entrada.",
               textAlign: TextAlign.center,
               style: TextStyle(color: Colors.grey, fontSize: 16),
             ),
@@ -282,9 +308,8 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     );
   }
 
-  // --- VISTA B: TICKET ACTIVO ---
+  // --- VISTA B: TICKET ACTIVO (Sin cambios mayores) ---
   Widget _buildActiveTicketView() {
-    // Usamos el servicio para obtener el stream
     return StreamBuilder<DocumentSnapshot>(
       stream: _parkingService.getTicketStream(_currentTicketId!),
       builder: (context, snapshot) {
@@ -307,6 +332,8 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
         
         String estado = data['estado'] ?? 'pendiente';
         bool isValidado = estado == 'validado';
+        // Mostramos el ID de la tienda si está disponible
+        String tienda = data['shop_ID'] ?? 'General';
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -332,7 +359,7 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
                           ),
                           Text(
-                            isValidado ? "Puedes salir del parking" : "Pendiente de pago/validación",
+                            isValidado ? "Puedes salir del parking" : "Ubicación: $tienda",
                             style: const TextStyle(color: Colors.white70, fontSize: 12),
                           )
                         ],
@@ -355,8 +382,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                           const SizedBox(height: 8),
                           Text(isValidado ? "¡Buen viaje!" : "Muestra este QR al salir", style: const TextStyle(fontSize: 12, color: Colors.grey)),
                           const Divider(height: 40),
-                          _row("Matrícula", data['matricula'] ?? "---"),
-                          const SizedBox(height: 10),
                           _row("Hora Entrada", DateFormat('HH:mm').format(fechaEntrada)),
                           const SizedBox(height: 10),
                           _row("Tiempo aprox.", tiempoTexto),

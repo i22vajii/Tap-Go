@@ -1,13 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../config/app_colors.dart';
-// Importa el servicio que creamos en el paso anterior
 import '../../../services/queue_service.dart'; 
 
 class ActiveQueueView extends StatelessWidget {
   final VoidCallback onLeave;
-  final String queueId;       // Necesitamos saber qué cola mirar
-  final int myTicketNumber;   // Necesitamos saber cuál es mi número
+  final String queueId;       
+  final int myTicketNumber;   
 
   const ActiveQueueView({
     super.key, 
@@ -18,27 +17,69 @@ class ActiveQueueView extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    // Usamos StreamBuilder para escuchar cambios en la base de datos EN VIVO
     return StreamBuilder<DocumentSnapshot>(
       stream: QueueService().getQueueStream(queueId),
       builder: (context, snapshot) {
         
-        // 1. Estado de Carga
+        // 1. MANEJO DE ERRORES
+        if (snapshot.hasError) {
+          return Scaffold(
+            body: Center(
+              child: Padding(
+                padding: const EdgeInsets.all(20),
+                child: Text("Ocurrió un error: ${snapshot.error}", textAlign: TextAlign.center),
+              )
+            )
+          );
+        }
+
+        // 2. Estado de Carga
         if (!snapshot.hasData) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
 
-        // 2. Extraer datos de Firebase
-        var data = snapshot.data!;
-        if (!data.exists) return const Scaffold(body: Center(child: Text("La cola se ha cerrado")));
+        // 3. Validación de Documento
+        var doc = snapshot.data!;
+        if (!doc.exists) return const Scaffold(body: Center(child: Text("Esta cola ya no existe o ha sido cerrada.")));
 
-        int currentServing = data['current_number'] ?? 0; // A quién atienden ahora
-        int peopleAhead = myTicketNumber - currentServing; // Cuántos tengo delante
-        
-        // Lógica visual: Si ya me pasé o es mi turno
+        // 4. EXTRACCIÓN SEGURA DE DATOS
+        final data = doc.data() as Map<String, dynamic>? ?? {};
+
+        int safeInt(dynamic val) => (val is num) ? val.toInt() : int.tryParse(val.toString()) ?? 0;
+        num safeNum(dynamic val) => (val is num) ? val : num.tryParse(val.toString()) ?? 0;
+
+        int currentServing = safeInt(data['current_number']);
+        int peopleAhead = myTicketNumber - currentServing;
         bool isMyTurn = peopleAhead <= 0;
-        // Calculamos tiempo estimado (ej: 2 mins por persona)
-        int estimatedMin = peopleAhead > 0 ? peopleAhead * 2 : 0; 
+
+        // --- CÁLCULO DE TIEMPO (MODIFICADO) ---
+        String formattedTime = "0 min"; // Valor por defecto
+        
+        if (peopleAhead > 0) {
+          num totalServiceSeconds = safeNum(data['total_service_seconds']);
+          int servedCounts = safeInt(data['served_count']);
+
+          double avgSecondsPerPerson;
+
+          if (servedCounts > 0) {
+            avgSecondsPerPerson = (totalServiceSeconds / servedCounts).toDouble();
+          } else {
+            avgSecondsPerPerson = 120.0; // 2 min por defecto
+          }
+
+          double totalSecondsWait = peopleAhead * avgSecondsPerPerson;
+          
+          int minutes = totalSecondsWait ~/ 60; // División entera para minutos
+          int seconds = (totalSecondsWait % 60).toInt(); // Resto para segundos
+          
+          // Formateamos: si hay 0 minutos, solo muestra segundos, si no, ambos.
+          if (minutes > 0) {
+            formattedTime = "$minutes min $seconds s";
+          } else {
+            formattedTime = "$seconds s";
+          }
+        }
+        // ------------------------
 
         return Scaffold(
           backgroundColor: AppColors.grisHielo,
@@ -47,13 +88,14 @@ class ActiveQueueView extends StatelessWidget {
             backgroundColor: isMyTurn ? AppColors.turquesaVivo : Colors.white,
             foregroundColor: isMyTurn ? Colors.white : AppColors.azulProfundo,
             elevation: 0,
+            automaticallyImplyLeading: false, 
           ),
           body: Center(
             child: SingleChildScrollView(
               padding: const EdgeInsets.all(24),
               child: Column(
                 children: [
-                  // --- TARJETA PRINCIPAL ---
+                  // TARJETA DE TURNO
                   Container(
                     padding: const EdgeInsets.all(32),
                     decoration: BoxDecoration(
@@ -65,33 +107,25 @@ class ActiveQueueView extends StatelessWidget {
                       children: [
                         const Text("TU NÚMERO", style: TextStyle(color: Colors.grey, fontWeight: FontWeight.bold, letterSpacing: 1.5)),
                         const SizedBox(height: 10),
-                        
-                        // Mostramos TU número
                         Text(
                           "#$myTicketNumber", 
                           style: const TextStyle(color: AppColors.azulProfundo, fontSize: 80, fontWeight: FontWeight.bold, height: 1)
                         ),
-                        
                         const SizedBox(height: 20),
-                        
-                        // Estado dinámico
                         Chip(
                           label: Text(
                             isMyTurn ? "PASA AL MOSTRADOR" : "EN ESPERA",
                             style: TextStyle(color: isMyTurn ? Colors.white : AppColors.azulProfundo, fontWeight: FontWeight.bold),
                           ),
                           backgroundColor: isMyTurn ? AppColors.turquesaVivo : AppColors.aquaSuave,
-                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                         ),
-                        
                         const SizedBox(height: 30),
                         
-                        // Barra de progreso visual (simple)
                         if (!isMyTurn) ...[
                           Text("Atendiendo ahora al: #$currentServing", style: const TextStyle(color: Colors.grey)),
                           const SizedBox(height: 10),
                           LinearProgressIndicator(
-                            value: currentServing / myTicketNumber, // Barra avanza según se acerca tu número
+                            value: (myTicketNumber > 0) ? currentServing / myTicketNumber : 0, 
                             backgroundColor: AppColors.grisHielo, 
                             minHeight: 8,
                             borderRadius: BorderRadius.circular(4),
@@ -101,19 +135,17 @@ class ActiveQueueView extends StatelessWidget {
                       ],
                     ),
                   ),
-                  
                   const SizedBox(height: 24),
                   
-                  // --- TARJETAS DE INFORMACIÓN (Solo si no es mi turno) ---
                   if (!isMyTurn)
                     Row(children: [
                       Expanded(child: _infoCard(peopleAhead.toString(), "Personas delante", Icons.groups)),
                       const SizedBox(width: 16),
-                      Expanded(child: _infoCard("$estimatedMin min", "Tiempo estimado", Icons.timer)),
+                      // Usamos la nueva variable formattedTime
+                      Expanded(child: _infoCard(formattedTime, "Tiempo estimado", Icons.timer)), 
                     ]),
 
                   const SizedBox(height: 40),
-                  
                   TextButton(
                     onPressed: onLeave, 
                     child: const Text("Abandonar cola", style: TextStyle(color: AppColors.alertaRojo, fontSize: 16))

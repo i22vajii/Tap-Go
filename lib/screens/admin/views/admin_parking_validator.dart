@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:mobile_scanner/mobile_scanner.dart'; // IMPORTANTE: Necesario para el escáner
+import 'package:firebase_auth/firebase_auth.dart'; // NECESARIO para obtener el usuario actual
+import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../config/app_colors.dart';
 
 class AdminParkingValidator extends StatefulWidget {
@@ -18,27 +19,68 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
     setState(() => _isLoading = true);
 
     try {
-      // 1. Buscar el ticket en Firebase
-      DocumentSnapshot doc = await FirebaseFirestore.instance
+      // ---------------------------------------------------------
+      // PASO 1: OBTENER DATOS DEL ADMINISTRADOR (SEGURIDAD)
+      // ---------------------------------------------------------
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) {
+        _mostrarError("No hay sesión de administrador activa.");
+        return;
+      }
+
+      // Buscamos el perfil del admin para saber su shop_ID
+      // CAMBIA 'users' POR EL NOMBRE DE TU COLECCIÓN DE USUARIOS SI ES DIFERENTE
+      DocumentSnapshot adminDoc = await FirebaseFirestore.instance
+          .collection('owners') 
+          .doc(user.uid)
+          .get();
+
+      if (!adminDoc.exists) {
+        _mostrarError("Error: No se encontró perfil de administrador.");
+        return;
+      }
+
+      final adminData = adminDoc.data() as Map<String, dynamic>;
+      final String adminShopId = adminData['shopID'] ?? 'sin_shop_id';
+
+      // ---------------------------------------------------------
+      // PASO 2: BUSCAR EL TICKET
+      // ---------------------------------------------------------
+      DocumentSnapshot ticketDoc = await FirebaseFirestore.instance
           .collection('tickets_parking')
           .doc(ticketId)
           .get();
 
-      if (!doc.exists) {
-        _mostrarError("Ticket no encontrado");
+      if (!ticketDoc.exists) {
+        _mostrarError("Ticket no encontrado en la base de datos.");
         return;
       }
 
-      Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
+      Map<String, dynamic> ticketData = ticketDoc.data() as Map<String, dynamic>;
 
-      // 2. Verificar si ya está validado
-      if (data['estado'] == 'validado') {
+      // ---------------------------------------------------------
+      // PASO 3: VALIDAR PROPIEDAD (SEGURIDAD)
+      // ---------------------------------------------------------
+      final String ticketShopId = ticketData['shopID'] ?? '';
+
+      // AQUÍ ESTÁ LA RESTRICCIÓN:
+      if (ticketShopId != adminShopId) {
+        _mostrarError("⛔ ACCESO DENEGADO: Este ticket pertenece a otro parking.");
+        return;
+      }
+
+      // ---------------------------------------------------------
+      // PASO 4: VERIFICAR ESTADO Y CALCULAR
+      // ---------------------------------------------------------
+      
+      // Verificar si ya está validado
+      if (ticketData['estado'] == 'validado') {
         _mostrarError("Este ticket YA fue validado anteriormente.");
         return;
       }
 
-      // 3. Calcular Coste (Ejemplo: 0.05€ el minuto)
-      Timestamp entrada = data['entrada'];
+      // Calcular Coste (Ejemplo: 0.05€ el minuto)
+      Timestamp entrada = ticketData['entrada'];
       DateTime horaEntrada = entrada.toDate();
       Duration estancia = DateTime.now().difference(horaEntrada);
       
@@ -47,8 +89,8 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
       if (precio < 1.0) precio = 1.0; 
 
       if (mounted) {
-        // 4. Mostrar diálogo de cobro
-        _mostrarDialogoCobro(ticketId, data['matricula'], estancia, precio);
+        // Mostrar diálogo de cobro
+        _mostrarDialogoCobro(ticketId, estancia, precio);
       }
 
     } catch (e) {
@@ -58,7 +100,7 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
     }
   }
 
-  void _mostrarDialogoCobro(String id, String matricula, Duration tiempo, double precio) {
+  void _mostrarDialogoCobro(String id, Duration tiempo, double precio) {
     showDialog(
       context: context,
       barrierDismissible: false, // Obliga a elegir
@@ -69,7 +111,6 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
           children: [
             const Icon(Icons.directions_car, size: 50, color: AppColors.azulProfundo),
             const SizedBox(height: 10),
-            Text("Matrícula: $matricula", style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 18)),
             const Divider(),
             _infoRow("Tiempo:", "${tiempo.inHours}h ${tiempo.inMinutes.remainder(60)}m"),
             _infoRow("Tarifa:", "0.05€ / min"),
@@ -104,6 +145,7 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
                 'estado': 'validado',
                 'coste': precio,
                 'salida': FieldValue.serverTimestamp(),
+                'validado_por': FirebaseAuth.instance.currentUser?.uid, // Opcional: registrar quién cobró
               });
               
               if (ctx.mounted) {
@@ -184,7 +226,7 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
               
               if (_isLoading)
                 const Padding(
-                  padding: EdgeInsets.only(top: 20), // CORREGIDO: Sintaxis correcta
+                  padding: EdgeInsets.only(top: 20),
                   child: CircularProgressIndicator(),
                 )
             ],

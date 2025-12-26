@@ -248,7 +248,7 @@ class _OffersListViewState extends State<OffersListView> {
       // Filtramos directamente aquí por 'shopId' y 'activa'
       stream: FirebaseFirestore.instance
           .collection('ofertas')
-          .where('shopId', isEqualTo: shopId)
+          .where('shopID', isEqualTo: shopId)
           .where('activa', isEqualTo: true)
           .snapshots(),
       builder: (context, snapshot) {
