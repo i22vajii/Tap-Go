@@ -2,8 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import 'package:qr_flutter/qr_flutter.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
 import '../../../config/app_colors.dart'; 
+import '../../common/qr_scanner_screen.dart';
 
 class AdminOffersManager extends StatefulWidget {
   const AdminOffersManager({super.key});
@@ -17,7 +17,7 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
   final CollectionReference _ofertasRef = 
       FirebaseFirestore.instance.collection('ofertas');
 
-  // [NUEVO] Función para obtener el shopID del Admin actual
+  // Función para obtener el shopID del Admin actual
   Future<String?> _getAdminShopId() async {
     final user = FirebaseAuth.instance.currentUser;
     if (user == null) return null;
@@ -138,11 +138,13 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
           IconButton(
             icon: const Icon(Icons.qr_code_scanner),
             onPressed: () async {
+              // USAMOS LA VISTA COMPARTIDA
               final codigoLeido = await Navigator.push(
                 context, 
-                MaterialPageRoute(builder: (context) => const ScannerScreen())
+                MaterialPageRoute(builder: (context) => const QrScannerScreen())
               );
-              if (codigoLeido != null && context.mounted) {
+              
+              if (codigoLeido != null && codigoLeido is String && context.mounted) {
                 ScaffoldMessenger.of(context).showSnackBar(
                   SnackBar(content: Text("Cupón: $codigoLeido"), backgroundColor: AppColors.turquesaVivo)
                 );
@@ -159,7 +161,6 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
         icon: const Icon(Icons.add, color: Colors.white),
       ),
       
-      // [CAMBIO IMPORTANTE] Envolvemos todo en un FutureBuilder para obtener el ID primero
       body: FutureBuilder<String?>(
         future: _getAdminShopId(),
         builder: (context, userSnapshot) {
@@ -189,7 +190,6 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
                 .snapshots(),
             builder: (context, AsyncSnapshot<QuerySnapshot> snapshot) {
               if (snapshot.hasError) {
-                // OJO: Si sale error aquí, suele ser falta de índice en Firebase
                 return Center(child: Padding(
                   padding: const EdgeInsets.all(20.0),
                   child: Text("Error de carga. Si ves un enlace en la consola, haz clic para crear el índice.\nError: ${snapshot.error}", textAlign: TextAlign.center),
@@ -230,13 +230,10 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
     );
   }
 
-  // Tarjeta individual (Ligeramente ajustada)
+  // Tarjeta individual
   Widget _offerItem(String id, Map<String, dynamic> data) {
     bool activa = data['activa'] ?? false;
-    // Ya no mostramos el shopId grande porque ya sabemos que son las nuestras, 
-    // pero lo dejo en debug por si acaso.
-    String shopId = data['shopID'] ?? '---'; 
-
+    
     return Card(
       elevation: activa ? 2 : 0,
       margin: const EdgeInsets.only(bottom: 16),
@@ -321,6 +318,7 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
         content: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
+            // Mantenemos QrImageView de qr_flutter para MOSTRAR el código
             SizedBox(width: 200, height: 200, child: QrImageView(data: codigo, size: 200)),
             const SizedBox(height: 10),
             Text(codigo, style: const TextStyle(fontWeight: FontWeight.bold, letterSpacing: 2)),
@@ -330,122 +328,4 @@ class _AdminOffersManagerState extends State<AdminOffersManager> {
       ),
     );
   }
-}
-
-// ==========================================
-// PANTALLA DE ESCÁNER (Igual que la original)
-// ==========================================
-// (Mantén aquí abajo el código de ScannerScreen y ScannerOverlayPainter 
-// tal cual me lo pasaste, no requiere cambios)
-
-class ScannerScreen extends StatefulWidget {
-  const ScannerScreen({super.key});
-  @override
-  State<ScannerScreen> createState() => _ScannerScreenState();
-}
-
-class _ScannerScreenState extends State<ScannerScreen> {
-  final MobileScannerController controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    returnImage: false,
-  );
-  bool _isScanned = false; 
-
-  @override
-  Widget build(BuildContext context) {
-    final double scanWindowSize = 250.0;
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: controller,
-            onDetect: (BarcodeCapture capture) {
-              if (_isScanned) return; 
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  _isScanned = true;
-                  final String code = barcode.rawValue!;
-                  Navigator.pop(context, code); 
-                  break; 
-                }
-              }
-            },
-          ),
-          CustomPaint(
-            painter: ScannerOverlayPainter(
-              scanWindow: Rect.fromCenter(
-                center: MediaQuery.of(context).size.center(Offset.zero),
-                width: scanWindowSize,
-                height: scanWindowSize,
-              ),
-              borderRadius: 20.0,
-            ),
-            child: Container(),
-          ),
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      IconButton(
-                        icon: ValueListenableBuilder(
-                          valueListenable: controller,
-                          builder: (context, state, child) {
-                            return Icon(
-                              state.torchState == TorchState.off ? Icons.flash_off : Icons.flash_on,
-                              color: Colors.white, size: 30
-                            );
-                          },
-                        ),
-                        onPressed: () => controller.toggleTorch(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                const Text("Enfoca el código QR", style: TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
-                const SizedBox(height: 100),
-              ],
-            ),
-          ),
-          Center(
-            child: Container(
-              width: scanWindowSize,
-              height: scanWindowSize,
-              decoration: BoxDecoration(
-                border: Border.all(color: AppColors.turquesaVivo, width: 3),
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class ScannerOverlayPainter extends CustomPainter {
-  final Rect scanWindow;
-  final double borderRadius;
-  ScannerOverlayPainter({required this.scanWindow, required this.borderRadius});
-  @override
-  void paint(Canvas canvas, Size size) {
-    final backgroundPath = Path()..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-    final cutoutPath = Path()
-      ..addRRect(RRect.fromRectAndRadius(scanWindow, Radius.circular(borderRadius)));
-    final backgroundPaint = Paint()..color = Colors.black.withOpacity(0.6)..style = PaintingStyle.fill;
-    final backgroundWithCutout = Path.combine(PathOperation.difference, backgroundPath, cutoutPath);
-    canvas.drawPath(backgroundWithCutout, backgroundPaint);
-  }
-  @override
-  bool shouldRepaint(ScannerOverlayPainter oldDelegate) => true;
 }

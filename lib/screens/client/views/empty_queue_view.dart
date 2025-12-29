@@ -1,9 +1,10 @@
+import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
-import 'package:mobile_scanner/mobile_scanner.dart';
+
 import '../../../config/app_colors.dart';
-import 'dart:convert';
+import '../../common/qr_scanner_screen.dart';
 
 class EmptyQueueView extends StatefulWidget {
   final Future<void> Function(String queueId) onJoin;
@@ -20,7 +21,7 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
 
   // --- LÓGICA CENTRALIZADA DE VALIDACIÓN ---
   void _validateAndJoin(String codigoLeido) async {
-    print('CÓDIGO PROCESADO: $codigoLeido');
+    debugPrint('CÓDIGO PROCESADO: $codigoLeido');
     
     // Asumimos que el código leído es directamente el ID de la tienda (ej: "tienda_01")
     if (codigoLeido.isNotEmpty && codigoLeido.startsWith("tienda_")) {
@@ -35,8 +36,8 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
 
   // --- LÓGICA NFC ---
   void _startNfcScan() async {
-    NfcAvailability availability = await NfcManager.instance.checkAvailability();
-    if (availability != NfcAvailability.enabled) {
+    bool isAvailable = await NfcManager.instance.isAvailable();
+    if (!isAvailable) {
       _showError("El NFC está desactivado o no disponible.");
       return;
     }
@@ -86,16 +87,18 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
     }
   }
 
-  // --- LÓGICA QR (VISUAL MEJORADO) ---
+  // --- LÓGICA QR (USANDO VISTA EXTERNA) ---
   void _startQrScan() async {
-    // Navegamos a la pantalla personalizada y esperamos el resultado
+    // Navegamos a la pantalla externa QrScannerScreen
     final codigo = await Navigator.of(context).push(
-      MaterialPageRoute(builder: (context) => const _QrScannerScreen()),
+      MaterialPageRoute(builder: (context) => const QrScannerScreen()),
     );
 
-    // Si volvimos con un código, lo validamos
+    // Si volvimos con un código (String), lo validamos
     if (codigo != null && codigo is String) {
-      _validateAndJoin(codigo);
+      if (mounted) {
+        _validateAndJoin(codigo);
+      }
     }
   }
 
@@ -252,168 +255,5 @@ class _EmptyQueueViewState extends State<EmptyQueueView> {
         ),
       ),
     );
-  }
-}
-
-// ==========================================
-// PANTALLA DE ESCÁNER (Clase Privada)
-// ==========================================
-
-class _QrScannerScreen extends StatefulWidget {
-  const _QrScannerScreen();
-
-  @override
-  State<_QrScannerScreen> createState() => _QrScannerScreenState();
-}
-
-class _QrScannerScreenState extends State<_QrScannerScreen> {
-  final MobileScannerController controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    returnImage: false,
-  );
-
-  bool _isScanned = false; 
-
-  @override
-  Widget build(BuildContext context) {
-    final double scanWindowSize = 250.0;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          // 1. Cámara
-          MobileScanner(
-            controller: controller,
-            onDetect: (BarcodeCapture capture) {
-              if (_isScanned) return; 
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  _isScanned = true;
-                  final String code = barcode.rawValue!;
-                  Navigator.pop(context, code); // Devolvemos el código
-                  break; 
-                }
-              }
-            },
-          ),
-
-          // 2. Overlay Oscuro con hueco (Painter copiado de tu referencia)
-          CustomPaint(
-            painter: _ScannerOverlayPainter(
-              scanWindow: Rect.fromCenter(
-                center: MediaQuery.of(context).size.center(Offset.zero),
-                width: scanWindowSize,
-                height: scanWindowSize,
-              ),
-              borderRadius: 20.0,
-            ),
-            child: Container(),
-          ),
-
-          // 3. Interfaz UI (Botones y Texto)
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      // Botón cerrar
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      // Botón Linterna
-                      IconButton(
-                        icon: ValueListenableBuilder(
-                          valueListenable: controller,
-                          builder: (context, state, child) {
-                            return Icon(
-                              state.torchState == TorchState.off 
-                                  ? Icons.flash_off 
-                                  : Icons.flash_on,
-                              color: Colors.white, 
-                              size: 30
-                            );
-                          },
-                        ),
-                        onPressed: () => controller.toggleTorch(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                const Text(
-                  "Enfoca el código QR de la tienda",
-                  style: TextStyle(
-                    color: Colors.white, 
-                    fontSize: 16, 
-                    fontWeight: FontWeight.bold,
-                    shadows: [Shadow(blurRadius: 10, color: Colors.black)]
-                  ),
-                ),
-                const SizedBox(height: 100),
-              ],
-            ),
-          ),
-          
-          // 4. Borde decorativo turquesa (para que se vea bonito el hueco)
-          Center(
-            child: Container(
-              width: scanWindowSize,
-              height: scanWindowSize,
-              decoration: BoxDecoration(
-                border: Border.all(color: AppColors.turquesaVivo, width: 3),
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// Pintor para el efecto de "recorte" oscuro
-class _ScannerOverlayPainter extends CustomPainter {
-  final Rect scanWindow;
-  final double borderRadius;
-
-  _ScannerOverlayPainter({required this.scanWindow, required this.borderRadius});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final backgroundPath = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-
-    final cutoutPath = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          scanWindow,
-          Radius.circular(borderRadius),
-        ),
-      );
-
-    final backgroundPaint = Paint()
-      ..color = Colors.black.withOpacity(0.6)
-      ..style = PaintingStyle.fill;
-
-    // Esta operación crea el "agujero"
-    final backgroundWithCutout = Path.combine(
-      PathOperation.difference,
-      backgroundPath,
-      cutoutPath,
-    );
-
-    canvas.drawPath(backgroundWithCutout, backgroundPaint);
-  }
-
-  @override
-  bool shouldRepaint(_ScannerOverlayPainter oldDelegate) {
-    return scanWindow != oldDelegate.scanWindow ||
-        borderRadius != oldDelegate.borderRadius;
   }
 }

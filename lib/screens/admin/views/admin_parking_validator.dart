@@ -1,8 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart'; // NECESARIO para obtener el usuario actual
-import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:firebase_auth/firebase_auth.dart'; 
 import '../../../config/app_colors.dart';
+import '../../common/qr_scanner_screen.dart';
 
 class AdminParkingValidator extends StatefulWidget {
   const AdminParkingValidator({super.key});
@@ -29,7 +29,6 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
       }
 
       // Buscamos el perfil del admin para saber su shop_ID
-      // CAMBIA 'users' POR EL NOMBRE DE TU COLECCIÓN DE USUARIOS SI ES DIFERENTE
       DocumentSnapshot adminDoc = await FirebaseFirestore.instance
           .collection('owners') 
           .doc(user.uid)
@@ -211,13 +210,14 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
                     shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
                   ),
                   onPressed: () async {
-                    // Abrimos el escáner (Reutilizando ScannerScreen local)
+                    // Abrimos el escáner (Usando QrScannerScreen externa)
                     final ticketId = await Navigator.push(
                       context, 
-                      MaterialPageRoute(builder: (context) => const ScannerScreen())
+                      MaterialPageRoute(builder: (context) => const QrScannerScreen())
                     );
 
-                    if (ticketId != null) {
+                    // Verificamos que sea un String válido
+                    if (ticketId != null && ticketId is String) {
                       _procesarTicket(ticketId);
                     }
                   },
@@ -234,157 +234,5 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
         ),
       ),
     );
-  }
-}
-
-// ==========================================
-// PANTALLA DE ESCÁNER (Incluida localmente)
-// ==========================================
-
-class ScannerScreen extends StatefulWidget {
-  const ScannerScreen({super.key});
-
-  @override
-  State<ScannerScreen> createState() => _ScannerScreenState();
-}
-
-class _ScannerScreenState extends State<ScannerScreen> {
-  final MobileScannerController controller = MobileScannerController(
-    detectionSpeed: DetectionSpeed.noDuplicates,
-    returnImage: false,
-  );
-
-  bool _isScanned = false; 
-
-  @override
-  Widget build(BuildContext context) {
-    final double scanWindowSize = 250.0;
-
-    return Scaffold(
-      backgroundColor: Colors.black,
-      body: Stack(
-        children: [
-          MobileScanner(
-            controller: controller,
-            onDetect: (BarcodeCapture capture) {
-              if (_isScanned) return; 
-              final List<Barcode> barcodes = capture.barcodes;
-              for (final barcode in barcodes) {
-                if (barcode.rawValue != null) {
-                  _isScanned = true;
-                  final String code = barcode.rawValue!;
-                  Navigator.pop(context, code); 
-                  break; 
-                }
-              }
-            },
-          ),
-          CustomPaint(
-            painter: ScannerOverlayPainter(
-              scanWindow: Rect.fromCenter(
-                center: MediaQuery.of(context).size.center(Offset.zero),
-                width: scanWindowSize,
-                height: scanWindowSize,
-              ),
-              borderRadius: 20.0,
-            ),
-            child: Container(),
-          ),
-          SafeArea(
-            child: Column(
-              children: [
-                Padding(
-                  padding: const EdgeInsets.all(16.0),
-                  child: Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    children: [
-                      IconButton(
-                        icon: const Icon(Icons.close, color: Colors.white, size: 30),
-                        onPressed: () => Navigator.pop(context),
-                      ),
-                      IconButton(
-                        icon: ValueListenableBuilder(
-                          valueListenable: controller,
-                          builder: (context, state, child) {
-                            return Icon(
-                              state.torchState == TorchState.off 
-                                  ? Icons.flash_off 
-                                  : Icons.flash_on,
-                              color: Colors.white, 
-                              size: 30
-                            );
-                          },
-                        ),
-                        onPressed: () => controller.toggleTorch(),
-                      ),
-                    ],
-                  ),
-                ),
-                const Spacer(),
-                const Text(
-                  "Enfoca el código QR del cliente",
-                  style: TextStyle(
-                    color: Colors.white, 
-                    fontSize: 16, 
-                    fontWeight: FontWeight.bold,
-                    shadows: [Shadow(blurRadius: 10, color: Colors.black)]
-                  ),
-                ),
-                const SizedBox(height: 100),
-              ],
-            ),
-          ),
-          Center(
-            child: Container(
-              width: scanWindowSize,
-              height: scanWindowSize,
-              decoration: BoxDecoration(
-                border: Border.all(color: AppColors.turquesaVivo, width: 3),
-                borderRadius: BorderRadius.circular(20),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-class ScannerOverlayPainter extends CustomPainter {
-  final Rect scanWindow;
-  final double borderRadius;
-
-  ScannerOverlayPainter({required this.scanWindow, required this.borderRadius});
-
-  @override
-  void paint(Canvas canvas, Size size) {
-    final backgroundPath = Path()
-      ..addRect(Rect.fromLTWH(0, 0, size.width, size.height));
-
-    final cutoutPath = Path()
-      ..addRRect(
-        RRect.fromRectAndRadius(
-          scanWindow,
-          Radius.circular(borderRadius),
-        ),
-      );
-
-    final backgroundPaint = Paint()
-      ..color = Colors.black.withOpacity(0.6)
-      ..style = PaintingStyle.fill;
-
-    final backgroundWithCutout = Path.combine(
-      PathOperation.difference,
-      backgroundPath,
-      cutoutPath,
-    );
-
-    canvas.drawPath(backgroundWithCutout, backgroundPaint);
-  }
-
-  @override
-  bool shouldRepaint(ScannerOverlayPainter oldDelegate) {
-    return scanWindow != oldDelegate.scanWindow ||
-        borderRadius != oldDelegate.borderRadius;
   }
 }
