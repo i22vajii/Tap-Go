@@ -1,14 +1,17 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/queue_service.dart'; 
+import '../../../services/queue_service.dart';
 
 class ActiveQueueView extends StatelessWidget {
   final VoidCallback onLeave;
   final String queueId;       
   final int myTicketNumber;   
+  
+  // Instanciamos el servicio
+  final QueueService _queueService = QueueService();
 
-  const ActiveQueueView({
+  ActiveQueueView({
     super.key, 
     required this.onLeave, 
     required this.queueId, 
@@ -18,75 +21,33 @@ class ActiveQueueView extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return StreamBuilder<DocumentSnapshot>(
-      stream: QueueService().getQueueStream(queueId),
+      stream: _queueService.getQueueStream(queueId),
       builder: (context, snapshot) {
         
-        // 1. MANEJO DE ERRORES
+        // 1. Manejo de Errores UI
         if (snapshot.hasError) {
-          return Scaffold(
-            body: Center(
-              child: Padding(
-                padding: const EdgeInsets.all(20),
-                child: Text("Ocurrió un error: ${snapshot.error}", textAlign: TextAlign.center),
-              )
-            )
-          );
+          return _buildErrorView("Ocurrió un error: ${snapshot.error}");
         }
 
-        // 2. Estado de Carga
+        // 2. Estado de Carga UI
         if (!snapshot.hasData) {
           return const Scaffold(body: Center(child: CircularProgressIndicator()));
         }
 
-        // 3. Validación de Documento
         var doc = snapshot.data!;
-        if (!doc.exists) return const Scaffold(body: Center(child: Text("Esta cola ya no existe o ha sido cerrada.")));
+        if (!doc.exists) return _buildErrorView("Esta cola ya no existe o ha sido cerrada.");
 
-        // 4. EXTRACCIÓN SEGURA DE DATOS
-        final data = doc.data() as Map<String, dynamic>? ?? {};
+        // 3. DELEGAMOS LA LÓGICA AL SERVICIO
+        // Le pasamos el documento sucio y nos devuelve los datos limpios
+        final metrics = _queueService.calculateMetrics(doc, myTicketNumber);
 
-        int safeInt(dynamic val) => (val is num) ? val.toInt() : int.tryParse(val.toString()) ?? 0;
-        num safeNum(dynamic val) => (val is num) ? val : num.tryParse(val.toString()) ?? 0;
-
-        int currentServing = safeInt(data['current_number']);
-        int peopleAhead = myTicketNumber - currentServing;
-        bool isMyTurn = peopleAhead <= 0;
-
-        // --- CÁLCULO DE TIEMPO (MODIFICADO) ---
-        String formattedTime = "0 min"; // Valor por defecto
-        
-        if (peopleAhead > 0) {
-          num totalServiceSeconds = safeNum(data['total_service_seconds']);
-          int servedCounts = safeInt(data['served_count']);
-
-          double avgSecondsPerPerson;
-
-          if (servedCounts > 0) {
-            avgSecondsPerPerson = (totalServiceSeconds / servedCounts).toDouble();
-          } else {
-            avgSecondsPerPerson = 120.0; // 2 min por defecto
-          }
-
-          double totalSecondsWait = peopleAhead * avgSecondsPerPerson;
-          
-          int minutes = totalSecondsWait ~/ 60; // División entera para minutos
-          int seconds = (totalSecondsWait % 60).toInt(); // Resto para segundos
-          
-          // Formateamos: si hay 0 minutos, solo muestra segundos, si no, ambos.
-          if (minutes > 0) {
-            formattedTime = "$minutes min $seconds s";
-          } else {
-            formattedTime = "$seconds s";
-          }
-        }
-        // ------------------------
-
+        // 4. Renderizado UI puro
         return Scaffold(
           backgroundColor: AppColors.grisHielo,
           appBar: AppBar(
-            title: Text(isMyTurn ? "¡ES TU TURNO!" : "Tu Turno"),
-            backgroundColor: isMyTurn ? AppColors.turquesaVivo : Colors.white,
-            foregroundColor: isMyTurn ? Colors.white : AppColors.azulProfundo,
+            title: Text(metrics.isMyTurn ? "¡ES TU TURNO!" : "Tu Turno"),
+            backgroundColor: metrics.isMyTurn ? AppColors.turquesaVivo : Colors.white,
+            foregroundColor: metrics.isMyTurn ? Colors.white : AppColors.azulProfundo,
             elevation: 0,
             automaticallyImplyLeading: false, 
           ),
@@ -114,18 +75,18 @@ class ActiveQueueView extends StatelessWidget {
                         const SizedBox(height: 20),
                         Chip(
                           label: Text(
-                            isMyTurn ? "PASA AL MOSTRADOR" : "EN ESPERA",
-                            style: TextStyle(color: isMyTurn ? Colors.white : AppColors.azulProfundo, fontWeight: FontWeight.bold),
+                            metrics.isMyTurn ? "PASA AL MOSTRADOR" : "EN ESPERA",
+                            style: TextStyle(color: metrics.isMyTurn ? Colors.white : AppColors.azulProfundo, fontWeight: FontWeight.bold),
                           ),
-                          backgroundColor: isMyTurn ? AppColors.turquesaVivo : AppColors.aquaSuave,
+                          backgroundColor: metrics.isMyTurn ? AppColors.turquesaVivo : AppColors.aquaSuave,
                         ),
                         const SizedBox(height: 30),
                         
-                        if (!isMyTurn) ...[
-                          Text("Atendiendo ahora al: #$currentServing", style: const TextStyle(color: Colors.grey)),
+                        if (!metrics.isMyTurn) ...[
+                          Text("Atendiendo ahora al: #${metrics.currentServing}", style: const TextStyle(color: Colors.grey)),
                           const SizedBox(height: 10),
                           LinearProgressIndicator(
-                            value: (myTicketNumber > 0) ? currentServing / myTicketNumber : 0, 
+                            value: (myTicketNumber > 0) ? metrics.currentServing / myTicketNumber : 0, 
                             backgroundColor: AppColors.grisHielo, 
                             minHeight: 8,
                             borderRadius: BorderRadius.circular(4),
@@ -137,12 +98,11 @@ class ActiveQueueView extends StatelessWidget {
                   ),
                   const SizedBox(height: 24),
                   
-                  if (!isMyTurn)
+                  if (!metrics.isMyTurn)
                     Row(children: [
-                      Expanded(child: _infoCard(peopleAhead.toString(), "Personas delante", Icons.groups)),
+                      Expanded(child: _infoCard(metrics.peopleAhead.toString(), "Personas delante", Icons.groups)),
                       const SizedBox(width: 16),
-                      // Usamos la nueva variable formattedTime
-                      Expanded(child: _infoCard(formattedTime, "Tiempo estimado", Icons.timer)), 
+                      Expanded(child: _infoCard(metrics.formattedWaitTime, "Tiempo estimado", Icons.timer)), 
                     ]),
 
                   const SizedBox(height: 40),
@@ -156,6 +116,17 @@ class ActiveQueueView extends StatelessWidget {
           ),
         );
       }
+    );
+  }
+
+  Widget _buildErrorView(String msg) {
+    return Scaffold(
+      body: Center(
+        child: Padding(
+          padding: const EdgeInsets.all(20),
+          child: Text(msg, textAlign: TextAlign.center),
+        )
+      )
     );
   }
 

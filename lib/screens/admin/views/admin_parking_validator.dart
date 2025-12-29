@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart'; 
 import '../../../config/app_colors.dart';
+import '../../../services/parking_service.dart';
 import '../../common/qr_scanner_screen.dart';
 
 class AdminParkingValidator extends StatefulWidget {
@@ -12,97 +11,55 @@ class AdminParkingValidator extends StatefulWidget {
 }
 
 class _AdminParkingValidatorState extends State<AdminParkingValidator> {
+  final ParkingService _parkingService = ParkingService();
   bool _isLoading = false;
 
-  // Lógica para procesar el ticket escaneado
+  // Lógica delegada al servicio
   Future<void> _procesarTicket(String ticketId) async {
     setState(() => _isLoading = true);
 
     try {
-      // ---------------------------------------------------------
-      // PASO 1: OBTENER DATOS DEL ADMINISTRADOR (SEGURIDAD)
-      // ---------------------------------------------------------
-      final user = FirebaseAuth.instance.currentUser;
-      if (user == null) {
-        _mostrarError("No hay sesión de administrador activa.");
-        return;
-      }
-
-      // Buscamos el perfil del admin para saber su shop_ID
-      DocumentSnapshot adminDoc = await FirebaseFirestore.instance
-          .collection('owners') 
-          .doc(user.uid)
-          .get();
-
-      if (!adminDoc.exists) {
-        _mostrarError("Error: No se encontró perfil de administrador.");
-        return;
-      }
-
-      final adminData = adminDoc.data() as Map<String, dynamic>;
-      final String adminShopId = adminData['shopID'] ?? 'sin_shop_id';
-
-      // ---------------------------------------------------------
-      // PASO 2: BUSCAR EL TICKET
-      // ---------------------------------------------------------
-      DocumentSnapshot ticketDoc = await FirebaseFirestore.instance
-          .collection('tickets_parking')
-          .doc(ticketId)
-          .get();
-
-      if (!ticketDoc.exists) {
-        _mostrarError("Ticket no encontrado en la base de datos.");
-        return;
-      }
-
-      Map<String, dynamic> ticketData = ticketDoc.data() as Map<String, dynamic>;
-
-      // ---------------------------------------------------------
-      // PASO 3: VALIDAR PROPIEDAD (SEGURIDAD)
-      // ---------------------------------------------------------
-      final String ticketShopId = ticketData['shopID'] ?? '';
-
-      // AQUÍ ESTÁ LA RESTRICCIÓN:
-      if (ticketShopId != adminShopId) {
-        _mostrarError("⛔ ACCESO DENEGADO: Este ticket pertenece a otro parking.");
-        return;
-      }
-
-      // ---------------------------------------------------------
-      // PASO 4: VERIFICAR ESTADO Y CALCULAR
-      // ---------------------------------------------------------
-      
-      // Verificar si ya está validado
-      if (ticketData['estado'] == 'validado') {
-        _mostrarError("Este ticket YA fue validado anteriormente.");
-        return;
-      }
-
-      // Calcular Coste (Ejemplo: 0.05€ el minuto)
-      Timestamp entrada = ticketData['entrada'];
-      DateTime horaEntrada = entrada.toDate();
-      Duration estancia = DateTime.now().difference(horaEntrada);
-      
-      // Coste mínimo 1€, precio minuto 0.05€
-      double precio = (estancia.inMinutes * 0.05);
-      if (precio < 1.0) precio = 1.0; 
+      // 1. El servicio verifica seguridad y calcula precio
+      final calculation = await _parkingService.verifyAndCalculateTicket(ticketId);
 
       if (mounted) {
-        // Mostrar diálogo de cobro
-        _mostrarDialogoCobro(ticketId, estancia, precio);
+        // 2. Si todo ok, mostramos el diálogo con los datos calculados
+        _mostrarDialogoCobro(calculation);
       }
 
     } catch (e) {
-      _mostrarError("Error al leer ticket: $e");
+      _mostrarError(e.toString());
     } finally {
       if (mounted) setState(() => _isLoading = false);
     }
   }
 
-  void _mostrarDialogoCobro(String id, Duration tiempo, double precio) {
+  void _confirmarCobro(String ticketId, double precio) async {
+    try {
+      Navigator.pop(context); // Cerrar diálogo primero
+      setState(() => _isLoading = true);
+      
+      // 3. El servicio escribe en la base de datos
+      await _parkingService.processPayment(ticketId, precio);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text("✅ Ticket validado correctamente"), backgroundColor: Colors.green)
+        );
+      }
+    } catch (e) {
+      _mostrarError("Error al cobrar: $e");
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
+    }
+  }
+
+  // --- UI ---
+
+  void _mostrarDialogoCobro(TicketCalculation data) {
     showDialog(
       context: context,
-      barrierDismissible: false, // Obliga a elegir
+      barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         title: const Text("Validar Salida", textAlign: TextAlign.center),
         content: Column(
@@ -111,7 +68,7 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
             const Icon(Icons.directions_car, size: 50, color: AppColors.azulProfundo),
             const SizedBox(height: 10),
             const Divider(),
-            _infoRow("Tiempo:", "${tiempo.inHours}h ${tiempo.inMinutes.remainder(60)}m"),
+            _infoRow("Tiempo:", data.formattedTime),
             _infoRow("Tarifa:", "0.05€ / min"),
             const SizedBox(height: 10),
             Container(
@@ -124,7 +81,7 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
                   const Text("TOTAL A COBRAR:", style: TextStyle(fontWeight: FontWeight.bold)),
-                  Text("${precio.toStringAsFixed(2)} €", 
+                  Text("${data.totalPrice.toStringAsFixed(2)} €", 
                     style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.turquesaVivo)),
                 ],
               ),
@@ -138,22 +95,8 @@ class _AdminParkingValidatorState extends State<AdminParkingValidator> {
           ),
           ElevatedButton(
             style: ElevatedButton.styleFrom(backgroundColor: AppColors.turquesaVivo),
-            onPressed: () async {
-              // VALIDAR EN FIREBASE
-              await FirebaseFirestore.instance.collection('tickets_parking').doc(id).update({
-                'estado': 'validado',
-                'coste': precio,
-                'salida': FieldValue.serverTimestamp(),
-                'validado_por': FirebaseAuth.instance.currentUser?.uid, // Opcional: registrar quién cobró
-              });
-              
-              if (ctx.mounted) {
-                Navigator.pop(ctx);
-                ScaffoldMessenger.of(context).showSnackBar(
-                  const SnackBar(content: Text("✅ Ticket validado correctamente"), backgroundColor: Colors.green)
-                );
-              }
-            },
+            // Llamamos al wrapper de confirmación
+            onPressed: () => _confirmarCobro(data.ticketId, data.totalPrice),
             child: const Text("COBRAR Y ABRIR", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
           )
         ],

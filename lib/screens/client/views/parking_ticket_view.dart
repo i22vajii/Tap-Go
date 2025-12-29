@@ -1,16 +1,12 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
 
-// Paquetes
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
 
-// Importaciones propias (Asegúrate que estas rutas coinciden con tu proyecto)
 import '../../../config/app_colors.dart';
 import '../../../services/parking_service.dart';
 import '../../common/qr_scanner_screen.dart';
@@ -28,19 +24,17 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
   String? _currentTicketId;
   bool _isLoading = false;
   bool _isScanningNfc = false;
-  bool _buscandoTicketInicial = true;
+  bool _isInitializing = true;
   Timer? _timer;
 
   @override
   void initState() {
     super.initState();
-    _inicializarVista();
+    _buscarTicketActivo();
     
-    // Timer para actualizar la duración cada 30s
+    // Timer solo para refrescar la UI (el cálculo de tiempo está en el modelo)
     _timer = Timer.periodic(const Duration(seconds: 30), (timer) {
-      if (mounted && _currentTicketId != null) {
-        setState(() {});
-      }
+      if (mounted && _currentTicketId != null) setState(() {});
     });
   }
 
@@ -51,49 +45,24 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     super.dispose();
   }
 
-  // --- 1. LÓGICA DE INICIO ---
-  Future<void> _inicializarVista() async {
-    await Future.delayed(const Duration(milliseconds: 100)); 
-
+  // --- 1. INICIALIZACIÓN ---
+  Future<void> _buscarTicketActivo() async {
+    final ticketId = await _parkingService.findActiveTicketId();
     if (mounted) {
       setState(() {
-        _currentTicketId = null; 
-        _buscandoTicketInicial = false;
+        _currentTicketId = ticketId;
+        _isInitializing = false;
       });
     }
   }
 
-  // --- 2. LÓGICA DE ESCANEO Y VALIDACIÓN ---
-  
-  // AQUI ESTÁ EL CAMBIO PRINCIPAL
-  Future<void> _procesarEntrada(String rawData) async {
-    // 1. Limpieza básica
-    String codigoLimpio = rawData.trim();
-
-    // 2. VALIDACIÓN: Debe contener el prefijo 'parking_'
-    if (!codigoLimpio.startsWith('parking_')) {
-      _showError("Código inválido. Escanee un código de Parking.");
-      return; // Detenemos la ejecución aquí
-    }
-
-    // 3. EXTRACCIÓN: Quitamos 'parking_' para obtener solo el ID (ej: tienda_01)
-    String shopId = codigoLimpio.replaceFirst('parking_', '');
-
-    if (shopId.isEmpty) {
-      _showError("El código QR/NFC no contiene un ID de tienda.");
-      return;
-    }
-
-    // Si pasa las validaciones, procedemos
+  // --- 2. PROCESAR ENTRADA (Delegado al Servicio) ---
+  Future<void> _procesarCodigo(String rawData) async {
     setState(() => _isLoading = true);
     
-    User? usuarioActual = FirebaseAuth.instance.currentUser;
-    // ignore: unused_local_variable
-    String uid = usuarioActual?.uid ?? 'usuario_invitado';
-
     try {
-      // Enviamos solo el ID limpio al servicio
-      String newTicketId = await _parkingService.checkIn(shopId);
+      // El servicio valida, limpia y crea el ticket
+      String newTicketId = await _parkingService.checkIn(rawData);
 
       if (mounted) {
         setState(() {
@@ -104,18 +73,41 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     } catch (e) {
       if (mounted) {
         setState(() => _isLoading = false);
-        _showError("Error al generar ticket: $e");
+        _showError(e.toString());
       }
     }
   }
 
+  // --- 3. PROCESAR SALIDA ---
+  void _salirDelParking() async {
+    setState(() => _isLoading = true); 
+    try {
+      if (_currentTicketId != null) {
+        await _parkingService.checkOut(_currentTicketId!);
+      }
+      if (mounted) {
+        setState(() {
+          _currentTicketId = null;
+          _isLoading = false;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+        _showError("Error al salir: $e");
+        // Opcional: Si falló porque ya no existe, reseteamos
+        setState(() => _currentTicketId = null);
+      }
+    }
+  }
+
+  // --- ESCANEO HARDWARE ---
   void _startQrScan() async {
     final codigo = await Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => const QrScannerScreen()),
     );
-
     if (codigo != null && codigo is String) {
-      _procesarEntrada(codigo);
+      _procesarCodigo(codigo);
     }
   }
 
@@ -140,18 +132,16 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
 
             final record = ndefMessage.records.first;
             final payload = List<int>.from(record.payload);
-            
-            // Decodificación estándar de NDEF Text Record
             String textoLeido = utf8.decode(payload.sublist(1));
-            // Eliminar código de lenguaje (ej: "en")
-            if (textoLeido.length > 2) textoLeido = textoLeido.substring(2);
+            
+            // Usamos el helper del servicio para limpiar el string NFC
+            textoLeido = _parkingService.cleanNfcPayload(textoLeido);
 
             await NfcManager.instance.stopSession();
             
             if (mounted) {
               setState(() => _isScanningNfc = false);
-              // Enviamos el texto crudo a procesar
-              _procesarEntrada(textoLeido);
+              _procesarCodigo(textoLeido);
             }
           } catch (e) {
             await NfcManager.instance.stopSession();
@@ -170,30 +160,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     }
   }
 
-  // --- 3. LÓGICA DE SALIDA ---
-  void _salirDelParking() async {
-    setState(() => _isLoading = true); 
-
-    try {
-      if (_currentTicketId != null) {
-        await _parkingService.checkOut(_currentTicketId!);
-      }
-      
-      if (mounted) {
-        setState(() {
-          _currentTicketId = null;
-          _isLoading = false;
-        });
-      }
-    } catch (e) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-        _showError("Error al salir: $e");
-        setState(() => _currentTicketId = null);
-      }
-    }
-  }
-
   void _showError(String msg) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text(msg), backgroundColor: Colors.red),
@@ -203,7 +169,7 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
   // --- UI PRINCIPAL ---
   @override
   Widget build(BuildContext context) {
-    if (_buscandoTicketInicial) {
+    if (_isInitializing) {
       return const Scaffold(body: Center(child: CircularProgressIndicator()));
     }
 
@@ -219,7 +185,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
   // --- VISTA A: ESCÁNER ---
   Widget _buildScannerView() {
     String nfcText = _isScanningNfc ? "ACERCA EL MÓVIL..." : "ENTRAR CON NFC";
-    IconData nfcIcon = _isScanningNfc ? Icons.wifi_tethering : Icons.nfc;
     if (_isLoading) nfcText = "VALIDANDO CÓDIGO...";
 
     return Center(
@@ -257,7 +222,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
             ),
             const SizedBox(height: 48),
 
-            // Botón NFC
             SizedBox(
               width: double.infinity,
               height: 56,
@@ -269,13 +233,12 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                 onPressed: (_isLoading || _isScanningNfc) ? null : _startNfcScan,
                 icon: _isLoading
                     ? const SizedBox(width: 24, height: 24, child: CircularProgressIndicator(color: Colors.white, strokeWidth: 2))
-                    : Icon(nfcIcon, color: Colors.white),
+                    : Icon(_isScanningNfc ? Icons.wifi_tethering : Icons.nfc, color: Colors.white),
                 label: Text(nfcText, style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold)),
               ),
             ),
             const SizedBox(height: 16),
 
-            // Botón QR
             if (!_isLoading && !_isScanningNfc)
               SizedBox(
                 width: double.infinity,
@@ -308,32 +271,25 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     );
   }
 
-  // --- VISTA B: TICKET ACTIVO (Sin cambios mayores) ---
+  // --- VISTA B: TICKET ACTIVO (Tipada con Modelo) ---
   Widget _buildActiveTicketView() {
-    return StreamBuilder<DocumentSnapshot>(
+    return StreamBuilder<ParkingTicket>(
       stream: _parkingService.getTicketStream(_currentTicketId!),
       builder: (context, snapshot) {
-        if (snapshot.hasError) return const Center(child: Text("Error al cargar ticket"));
-        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
         
-        if (!snapshot.data!.exists) {
-           WidgetsBinding.instance.addPostFrameCallback((_) {
-             if(mounted) setState(() => _currentTicketId = null);
-           });
-           return const Center(child: Text("Ticket finalizado"));
+        // Manejo de estados del Stream
+        if (snapshot.hasError) {
+          // Si el error es ticket cerrado/borrado, reseteamos la vista
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            if(mounted && _currentTicketId != null) setState(() => _currentTicketId = null);
+          });
+          return const Center(child: Text("Ticket finalizado o no encontrado"));
         }
+        
+        if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
-        var data = snapshot.data!.data() as Map<String, dynamic>;
-        
-        Timestamp entrada = data['entrada'] ?? Timestamp.now();
-        DateTime fechaEntrada = entrada.toDate();
-        Duration tiempo = DateTime.now().difference(fechaEntrada);
-        String tiempoTexto = "${tiempo.inHours}h ${tiempo.inMinutes.remainder(60)}m";
-        
-        String estado = data['estado'] ?? 'pendiente';
-        bool isValidado = estado == 'validado';
-        // Mostramos el ID de la tienda si está disponible
-        String tienda = data['shop_ID'] ?? 'General';
+        // Usamos el OBJETO ticket
+        final ticket = snapshot.data!;
 
         return SingleChildScrollView(
           padding: const EdgeInsets.all(24),
@@ -347,19 +303,19 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                       width: double.infinity,
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
-                        color: isValidado ? Colors.green : AppColors.azulProfundo, 
+                        color: ticket.isValidated ? Colors.green : AppColors.azulProfundo, 
                         borderRadius: const BorderRadius.vertical(top: Radius.circular(20)),
                       ),
                       child: Column(
                         children: [
-                          Icon(isValidado ? Icons.check_circle : Icons.local_parking, color: Colors.white, size: 40),
+                          Icon(ticket.isValidated ? Icons.check_circle : Icons.local_parking, color: Colors.white, size: 40),
                           const SizedBox(height: 8),
                           Text(
-                            isValidado ? "TICKET VALIDADO" : "TICKET ACTIVO",
+                            ticket.isValidated ? "TICKET VALIDADO" : "TICKET ACTIVO",
                             style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 18),
                           ),
                           Text(
-                            isValidado ? "Puedes salir del parking" : "Ubicación: $tienda",
+                            ticket.isValidated ? "Puedes salir del parking" : "Ubicación: ${ticket.shopId}",
                             style: const TextStyle(color: Colors.white70, fontSize: 12),
                           )
                         ],
@@ -374,17 +330,18 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                             height: 180,
                             width: 180,
                             child: QrImageView(
-                              data: _currentTicketId ?? "error", 
+                              data: ticket.id, 
                               version: QrVersions.auto,
                               size: 200.0,
                             ),
                           ),
                           const SizedBox(height: 8),
-                          Text(isValidado ? "¡Buen viaje!" : "Muestra este QR al salir", style: const TextStyle(fontSize: 12, color: Colors.grey)),
+                          Text(ticket.isValidated ? "¡Buen viaje!" : "Muestra este QR al salir", style: const TextStyle(fontSize: 12, color: Colors.grey)),
                           const Divider(height: 40),
-                          _row("Hora Entrada", DateFormat('HH:mm').format(fechaEntrada)),
+                          _row("Hora Entrada", DateFormat('HH:mm').format(ticket.entryTime)),
                           const SizedBox(height: 10),
-                          _row("Tiempo aprox.", tiempoTexto),
+                          // Usamos el getter del modelo
+                          _row("Tiempo aprox.", ticket.formattedDuration),
                           const Divider(height: 40),
                           
                           Row(
@@ -394,10 +351,10 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                               Container(
                                 padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                                 decoration: BoxDecoration(
-                                  color: isValidado ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
+                                  color: ticket.isValidated ? Colors.green.withOpacity(0.1) : Colors.orange.withOpacity(0.1),
                                   borderRadius: BorderRadius.circular(20)
                                 ),
-                                child: Text(estado.toUpperCase(), style: TextStyle(color: isValidado ? Colors.green : Colors.orange, fontWeight: FontWeight.bold)),
+                                child: Text(ticket.status.toUpperCase(), style: TextStyle(color: ticket.isValidated ? Colors.green : Colors.orange, fontWeight: FontWeight.bold)),
                               )
                             ],
                           )
@@ -408,7 +365,7 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                 ),
               ),
               const SizedBox(height: 30),
-              if (isValidado) 
+              if (ticket.isValidated) 
                 SizedBox(
                   width: double.infinity,
                   height: 56,

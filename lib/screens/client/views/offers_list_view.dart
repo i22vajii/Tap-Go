@@ -1,6 +1,5 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:qr_flutter/qr_flutter.dart';
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
@@ -17,15 +16,12 @@ class OffersListView extends StatefulWidget {
 }
 
 class _OffersListViewState extends State<OffersListView> {
-  // Estado de la tienda seleccionada (null = modo escáner)
+  // Instancia del servicio
+  final OffersService _offersService = OffersService();
+
   String? _currentShopId;
-  
-  // Variables de UI para el escáner
   bool _isScanningNfc = false;
   bool _isLoading = false;
-
-  // Instancia del servicio (aunque haremos una query directa para filtrar)
-  final OffersService _offersService = OffersService();
 
   @override
   void dispose() {
@@ -33,19 +29,11 @@ class _OffersListViewState extends State<OffersListView> {
     super.dispose();
   }
 
-  // --- LÓGICA DE PROCESAMIENTO ---
+  // --- LÓGICA DE PROCESAMIENTO (Delegada al Servicio) ---
 
   void _procesarCodigo(String rawCode) {
-    // Lógica solicitada: "si contiene 'ofertas_tienda_01', shopId es 'tienda_01'"
-    String shopId = rawCode;
-    
-    if (rawCode.contains('ofertas_')) {
-      // Extraemos lo que hay después de 'ofertas_'
-      shopId = rawCode.split('ofertas_')[1];
-    } else {
-      // Opcional: Si el código no tiene el formato esperado, avisamos o lo usamos tal cual
-      // Para este ejemplo, asumimos que si no tiene prefijo, es el ID directo
-    }
+    // Usamos el servicio para extraer el ID limpio
+    final shopId = _offersService.extractShopId(rawCode);
 
     setState(() {
       _currentShopId = shopId;
@@ -54,7 +42,7 @@ class _OffersListViewState extends State<OffersListView> {
     });
   }
 
-  // --- LÓGICA DE ESCANEO (NFC y QR) ---
+  // --- LÓGICA DE ESCANEO (Hardware) ---
 
   void _startNfcScan() async {
     bool isAvailable = await NfcManager.instance.isAvailable();
@@ -79,8 +67,8 @@ class _OffersListViewState extends State<OffersListView> {
             final payload = List<int>.from(record.payload);
             String textoLeido = utf8.decode(payload.sublist(1));
 
-            // Limpieza estándar de prefijo de idioma NDEF (ej: "en...")
-            if (textoLeido.length > 2) textoLeido = textoLeido.substring(2);
+            // Usamos el servicio para limpiar el payload NFC
+            textoLeido = _offersService.cleanNfcPayload(textoLeido);
 
             await NfcManager.instance.stopSession();
             
@@ -105,6 +93,7 @@ class _OffersListViewState extends State<OffersListView> {
   }
 
   void _startQrScan() async {
+    // Asumimos que QrScannerScreen devuelve un String nullable
     final codigo = await Navigator.of(context).push(
       MaterialPageRoute(builder: (context) => const QrScannerScreen()),
     );
@@ -149,8 +138,8 @@ class _OffersListViewState extends State<OffersListView> {
     );
   }
 
-  // --- VISTA 1: ESCÁNER (Similar al Parking) ---
-  
+  // --- VISTA 1: ESCÁNER ---
+  // (Este widget es puramente UI, se mantiene casi igual)
   Widget _buildScannerView() {
     String nfcText = _isScanningNfc ? "ACERCA EL MÓVIL..." : "ESCANEAR ETIQUETA TIENDA";
     IconData nfcIcon = _isScanningNfc ? Icons.wifi_tethering : Icons.nfc;
@@ -190,7 +179,6 @@ class _OffersListViewState extends State<OffersListView> {
             ),
             const SizedBox(height: 48),
 
-            // Botón NFC
             SizedBox(
               width: double.infinity,
               height: 56,
@@ -208,7 +196,6 @@ class _OffersListViewState extends State<OffersListView> {
             ),
             const SizedBox(height: 16),
 
-            // Botón QR
             if (!_isLoading && !_isScanningNfc)
               SizedBox(
                 width: double.infinity,
@@ -241,16 +228,13 @@ class _OffersListViewState extends State<OffersListView> {
     );
   }
 
-  // --- VISTA 2: LISTA DE OFERTAS FILTRADA ---
+  // --- VISTA 2: LISTA DE OFERTAS (Refactorizada) ---
 
   Widget _buildOffersList(String shopId) {
-    return StreamBuilder<QuerySnapshot>(
-      // Filtramos directamente aquí por 'shopId' y 'activa'
-      stream: FirebaseFirestore.instance
-          .collection('ofertas')
-          .where('shopID', isEqualTo: shopId)
-          .where('activa', isEqualTo: true)
-          .snapshots(),
+    // Usamos StreamBuilder tipado con List<OfferModel>
+    // Ya NO usamos QuerySnapshot ni Firestore aquí
+    return StreamBuilder<List<OfferModel>>(
+      stream: _offersService.getOffersByShop(shopId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
           return const Center(child: Text("Error al cargar ofertas"));
@@ -260,25 +244,27 @@ class _OffersListViewState extends State<OffersListView> {
           return const Center(child: CircularProgressIndicator());
         }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+        if (!snapshot.hasData || snapshot.data!.isEmpty) {
           return _buildEmptyState();
         }
 
+        final offers = snapshot.data!;
+
         return ListView.separated(
           padding: const EdgeInsets.all(16),
-          itemCount: snapshot.data!.docs.length,
+          itemCount: offers.length,
           separatorBuilder: (context, index) => const SizedBox(height: 16),
           itemBuilder: (context, index) {
-            var doc = snapshot.data!.docs[index];
-            Map<String, dynamic> data = doc.data() as Map<String, dynamic>;
-
+            final offer = offers[index];
+            
+            // Usamos las propiedades tipadas del modelo OfferModel
             return _offerTile(
               context,
-              data['titulo'] ?? "Oferta Especial",
-              data['descripcion'] ?? "Disponible ahora",
+              offer.title,
+              offer.description,
               "CANJEAR",
               Icons.local_offer_rounded,
-              data['codigo'] ?? "OFFER-000",
+              offer.code,
             );
           },
         );
@@ -307,7 +293,7 @@ class _OffersListViewState extends State<OffersListView> {
     );
   }
 
-  // --- WIDGETS AUXILIARES (Diálogo QR y Tile) ---
+  // --- WIDGETS AUXILIARES ---
 
   void _mostrarQRCanje(BuildContext context, String titulo, String codigo) {
     showDialog(
