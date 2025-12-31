@@ -11,6 +11,7 @@ dependencies:
   flutter:
     sdk: flutter
   cupertino_icons: ^1.0.8
+  flutter_local_notifications: ^18.0.0
   
   # Gráficos y UI
   fl_chart: ^1.1.1
