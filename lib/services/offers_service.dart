@@ -31,9 +31,14 @@ class OfferModel {
 
 // --- 2. SERVICIO ---
 class OffersService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _db;
+  final FirebaseAuth _auth;
   final String collection = 'ofertas';
+
+  // Constructor que permite inyección de mocks
+  OffersService({FirebaseFirestore? db, FirebaseAuth? auth})
+      : _db = db ?? FirebaseFirestore.instance,
+        _auth = auth ?? FirebaseAuth.instance;
 
   // ==========================================
   // LÓGICA DE PARSING (Cliente)

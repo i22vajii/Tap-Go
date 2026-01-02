@@ -8,12 +8,18 @@ class ActiveQueueView extends StatefulWidget {
   final VoidCallback onLeave;
   final String queueId;
   final int myTicketNumber;
+  
+  // Inyección de dependencias para Tests
+  final QueueService? service;
+  final FlutterLocalNotificationsPlugin? notificationPlugin; // <--- ESTO FALTABA
 
   const ActiveQueueView({
     super.key,
     required this.onLeave,
     required this.queueId,
     required this.myTicketNumber,
+    this.service,
+    this.notificationPlugin, // <--- ESTO FALTABA
   });
 
   @override
@@ -21,27 +27,31 @@ class ActiveQueueView extends StatefulWidget {
 }
 
 class _ActiveQueueViewState extends State<ActiveQueueView> {
-  final QueueService _queueService = QueueService();
+  late final QueueService _queueService;
+  late final FlutterLocalNotificationsPlugin _notificationsPlugin;
   
-  // 1. Plugin de notificaciones
-  final FlutterLocalNotificationsPlugin _notificationsPlugin = FlutterLocalNotificationsPlugin();
-  
-  // 2. Bandera para evitar spam de notificaciones (que solo suene una vez)
   bool _hasNotified = false;
 
   @override
   void initState() {
     super.initState();
-    _initNotifications();
+    // 1. Inicializar Servicio
+    _queueService = widget.service ?? QueueService();
+
+    // 2. Inicializar Notificaciones (Mock o Real)
+    _notificationsPlugin = widget.notificationPlugin ?? FlutterLocalNotificationsPlugin();
+    
+    // Solo inicializamos configuración real si NO es un mock (o si el mock lo permite)
+    // En el test, como pasamos un mock ya configurado, esto no romperá nada.
+    if (widget.notificationPlugin == null) {
+      _initNotifications();
+    }
   }
 
-  // Configuración inicial de las notificaciones
   Future<void> _initNotifications() async {
-    // 1. Configuración Android
     const AndroidInitializationSettings androidSettings = 
         AndroidInitializationSettings('@mipmap/launcher_icon');
     
-    // 2. Configuración iOS
     const DarwinInitializationSettings iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
@@ -55,18 +65,16 @@ class _ActiveQueueViewState extends State<ActiveQueueView> {
 
     await _notificationsPlugin.initialize(settings);
 
-    // 3. SOLICITAR PERMISO EN ANDROID 13+
     final androidImplementation = _notificationsPlugin
         .resolvePlatformSpecificImplementation<AndroidFlutterLocalNotificationsPlugin>();
         
     await androidImplementation?.requestNotificationsPermission();
   }
 
-  // Método para lanzar la notificación
   Future<void> _showAlertNotification() async {
     const AndroidNotificationDetails androidDetails = AndroidNotificationDetails(
-      'queue_channel', // id del canal
-      'Avisos de Turno', // nombre del canal
+      'queue_channel',
+      'Avisos de Turno',
       importance: Importance.max,
       priority: Priority.high,
       playSound: true,
@@ -88,27 +96,23 @@ class _ActiveQueueViewState extends State<ActiveQueueView> {
       stream: _queueService.getQueueStream(widget.queueId),
       builder: (context, snapshot) {
         
-        // Manejo de Errores y Carga
         if (snapshot.hasError) return _buildErrorView("Error: ${snapshot.error}");
         if (!snapshot.hasData) return const Scaffold(body: Center(child: CircularProgressIndicator()));
 
         var doc = snapshot.data!;
         if (!doc.exists) return _buildErrorView("Esta cola ya no existe.");
 
-        // Calculamos métricas
         final metrics = _queueService.calculateMetrics(doc, widget.myTicketNumber);
 
         // ============================================================
         // LÓGICA DE NOTIFICACIÓN
         // ============================================================
-        // Si hay exactamente 1 persona delante Y no hemos avisado antes
         if (metrics.peopleAhead == 1 && !_hasNotified) {
-          // Disparamos la notificación fuera del ciclo de renderizado
           WidgetsBinding.instance.addPostFrameCallback((_) {
             _showAlertNotification();
             if (mounted) {
               setState(() {
-                _hasNotified = true; // Bloqueamos para no repetir
+                _hasNotified = true; 
               });
             }
           });
@@ -129,7 +133,6 @@ class _ActiveQueueViewState extends State<ActiveQueueView> {
               padding: const EdgeInsets.all(24),
               child: Column(
                 children: [
-                  // TARJETA DE TURNO
                   Container(
                     padding: const EdgeInsets.all(32),
                     decoration: BoxDecoration(

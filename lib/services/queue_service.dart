@@ -44,9 +44,13 @@ class QueueMetrics {
 // ==========================================
 
 class QueueService {
-  // Instancias singleton de Firebase
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _db;
+  final FirebaseAuth _auth;
+
+  // Constructor con inyección de dependencias opcional
+  QueueService({FirebaseAuth? auth, FirebaseFirestore? firestore})
+      : _auth = auth ?? FirebaseAuth.instance,
+        _db = firestore ?? FirebaseFirestore.instance;
 
   // ---------------------------------------------------------
   // SECCIÓN A: MÉTODOS PARA EL ADMINISTRADOR (DUEÑO)

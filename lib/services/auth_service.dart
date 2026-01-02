@@ -2,8 +2,14 @@ import 'package:firebase_auth/firebase_auth.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 class AuthService {
-  final FirebaseAuth _auth = FirebaseAuth.instance;
-  final FirebaseFirestore _firestore = FirebaseFirestore.instance;
+  // Quitamos el 'final' inicializado y lo pasamos al constructor
+  final FirebaseAuth _auth;
+  final FirebaseFirestore _firestore;
+
+  // Constructor que permite inyectar mocks (o usa los reales por defecto)
+  AuthService({FirebaseAuth? auth, FirebaseFirestore? firestore})
+      : _auth = auth ?? FirebaseAuth.instance,
+        _firestore = firestore ?? FirebaseFirestore.instance;
 
   // Método para iniciar sesión solo si es Dueño
   Future<User?> loginOwner(String email, String password) async {

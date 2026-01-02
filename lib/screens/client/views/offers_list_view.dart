@@ -9,23 +9,47 @@ import '../../../services/offers_service.dart';
 import '../../common/qr_scanner_screen.dart';
 
 class OffersListView extends StatefulWidget {
-  const OffersListView({super.key});
+  // Parámetros opcionales para TESTING
+  final OffersService? service;
+  final String? initialShopId;
+
+  const OffersListView({
+    super.key, 
+    this.service, 
+    this.initialShopId
+  });
 
   @override
   State<OffersListView> createState() => _OffersListViewState();
 }
 
 class _OffersListViewState extends State<OffersListView> {
-  // Instancia del servicio
-  final OffersService _offersService = OffersService();
+  // 1. Declaramos el servicio como 'late final' para inicializarlo después
+  late final OffersService _offersService;
 
+  // 2. Variables de estado
   String? _currentShopId;
   bool _isScanningNfc = false;
   bool _isLoading = false;
 
   @override
+  void initState() {
+    super.initState();
+    // 3. INYECCIÓN: Si viene del test usamos ese, si no, creamos el real.
+    _offersService = widget.service ?? OffersService();
+    
+    // 4. ESTADO INICIAL: Si el test nos da un ID, empezamos con él directamente.
+    _currentShopId = widget.initialShopId;
+  }
+
+  @override
   void dispose() {
-    NfcManager.instance.stopSession();
+    // En un entorno de test o simulador, NfcManager podría lanzar error al parar
+    try {
+      NfcManager.instance.stopSession();
+    } catch (e) {
+      // Ignoramos errores de cierre de sesión NFC
+    }
     super.dispose();
   }
 
@@ -139,7 +163,6 @@ class _OffersListViewState extends State<OffersListView> {
   }
 
   // --- VISTA 1: ESCÁNER ---
-  // (Este widget es puramente UI, se mantiene casi igual)
   Widget _buildScannerView() {
     String nfcText = _isScanningNfc ? "ACERCA EL MÓVIL..." : "ESCANEAR ETIQUETA TIENDA";
     IconData nfcIcon = _isScanningNfc ? Icons.wifi_tethering : Icons.nfc;
@@ -228,12 +251,11 @@ class _OffersListViewState extends State<OffersListView> {
     );
   }
 
-  // --- VISTA 2: LISTA DE OFERTAS (Refactorizada) ---
+  // --- VISTA 2: LISTA DE OFERTAS ---
 
   Widget _buildOffersList(String shopId) {
-    // Usamos StreamBuilder tipado con List<OfferModel>
-    // Ya NO usamos QuerySnapshot ni Firestore aquí
     return StreamBuilder<List<OfferModel>>(
+      // Usamos el servicio inyectado
       stream: _offersService.getOffersByShop(shopId),
       builder: (context, snapshot) {
         if (snapshot.hasError) {
@@ -257,7 +279,6 @@ class _OffersListViewState extends State<OffersListView> {
           itemBuilder: (context, index) {
             final offer = offers[index];
             
-            // Usamos las propiedades tipadas del modelo OfferModel
             return _offerTile(
               context,
               offer.title,

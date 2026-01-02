@@ -67,9 +67,13 @@ class TicketCalculation {
 // ==========================================
 
 class ParkingService {
-  final FirebaseFirestore _db = FirebaseFirestore.instance;
-  final FirebaseAuth _auth = FirebaseAuth.instance;
+  final FirebaseFirestore _db;
+  final FirebaseAuth _auth;
   final String collection = 'tickets_parking';
+
+  ParkingService({FirebaseFirestore? db, FirebaseAuth? auth})
+      : _db = db ?? FirebaseFirestore.instance,
+        _auth = auth ?? FirebaseAuth.instance;
 
   // ---------------------------------------------------------
   // SECCIÓN A: UTILIDADES Y VALIDACIONES (Comunes)

@@ -3,7 +3,6 @@ import 'package:qr_flutter/qr_flutter.dart';
 import 'package:intl/intl.dart';
 import 'dart:convert';
 import 'dart:async';
-
 import 'package:nfc_manager/nfc_manager.dart';
 import 'package:nfc_manager_ndef/nfc_manager_ndef.dart';
 
@@ -12,14 +11,18 @@ import '../../../services/parking_service.dart';
 import '../../common/qr_scanner_screen.dart';
 
 class ParkingTicketView extends StatefulWidget {
-  const ParkingTicketView({super.key});
+  // 1. INYECCIÓN: Servicio opcional para tests
+  final ParkingService? service;
+
+  const ParkingTicketView({super.key, this.service});
 
   @override
   State<ParkingTicketView> createState() => _ParkingTicketViewState();
 }
 
 class _ParkingTicketViewState extends State<ParkingTicketView> {
-  final ParkingService _parkingService = ParkingService();
+  // 2. Variable 'late final'
+  late final ParkingService _parkingService;
   
   String? _currentTicketId;
   bool _isLoading = false;
@@ -30,9 +33,12 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
   @override
   void initState() {
     super.initState();
+    // 3. INICIALIZACIÓN: Usar mock o real
+    _parkingService = widget.service ?? ParkingService();
+
     _buscarTicketActivo();
     
-    // Timer solo para refrescar la UI (el cálculo de tiempo está en el modelo)
+    // Timer para refrescar la UI (el cálculo de tiempo es relativo a DateTime.now())
     _timer = Timer.periodic(const Duration(seconds: 30), (timer) {
       if (mounted && _currentTicketId != null) setState(() {});
     });
@@ -41,7 +47,7 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
   @override
   void dispose() {
     _timer?.cancel();
-    NfcManager.instance.stopSession();
+    try { NfcManager.instance.stopSession(); } catch(e) {}
     super.dispose();
   }
 
@@ -61,7 +67,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
     setState(() => _isLoading = true);
     
     try {
-      // El servicio valida, limpia y crea el ticket
       String newTicketId = await _parkingService.checkIn(rawData);
 
       if (mounted) {
@@ -95,7 +100,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
       if (mounted) {
         setState(() => _isLoading = false);
         _showError("Error al salir: $e");
-        // Opcional: Si falló porque ya no existe, reseteamos
         setState(() => _currentTicketId = null);
       }
     }
@@ -279,7 +283,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
         
         // Manejo de estados del Stream
         if (snapshot.hasError) {
-          // Si el error es ticket cerrado/borrado, reseteamos la vista
           WidgetsBinding.instance.addPostFrameCallback((_) {
             if(mounted && _currentTicketId != null) setState(() => _currentTicketId = null);
           });
@@ -288,7 +291,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
         
         if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
-        // Usamos el OBJETO ticket
         final ticket = snapshot.data!;
 
         return SingleChildScrollView(
@@ -340,7 +342,6 @@ class _ParkingTicketViewState extends State<ParkingTicketView> {
                           const Divider(height: 40),
                           _row("Hora Entrada", DateFormat('HH:mm').format(ticket.entryTime)),
                           const SizedBox(height: 10),
-                          // Usamos el getter del modelo
                           _row("Tiempo aprox.", ticket.formattedDuration),
                           const Divider(height: 40),
                           
