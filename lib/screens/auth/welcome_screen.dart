@@ -20,13 +20,10 @@ class WelcomeScreen extends StatelessWidget {
               Column(
                 children: [
                   const SizedBox(height: 40),
-                  Container(
-                    padding: const EdgeInsets.all(20),
-                    decoration: BoxDecoration(
-                      color: AppColors.aquaSuave.withOpacity(0.3),
-                      shape: BoxShape.circle,
-                    ),
-                    child: const Icon(Icons.nfc, size: 60, color: AppColors.turquesaVivo),
+                  CircleAvatar(
+                    radius: 60, 
+                    backgroundColor: AppColors.aquaSuave.withOpacity(0.3),
+                    backgroundImage: const AssetImage('media/logo.png'), 
                   ),
                   const SizedBox(height: 24),
                   RichText(

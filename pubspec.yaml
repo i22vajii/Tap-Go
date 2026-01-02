@@ -49,4 +49,4 @@ flutter:
 
   # Registro de Assets (Necesario para que la app vea tu foto)
   assets:
-    - media/TAP&GO.png
+    - media/logo.png

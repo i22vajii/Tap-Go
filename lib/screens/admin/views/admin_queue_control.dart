@@ -1,6 +1,6 @@
 import 'package:flutter/material.dart';
 import '../../../config/app_colors.dart';
-import '../../../services/queue_service.dart'; 
+import '../../../services/queue_service.dart';
 
 class AdminQueueControl extends StatefulWidget {
   const AdminQueueControl({super.key});
@@ -41,6 +41,7 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
     }
   }
 
+  // Lógica existente para avanzar (Atendido)
   void _onCallNext() async {
     if (_shopId == null) return;
     try {
@@ -50,9 +51,29 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
     }
   }
 
+  // --- NUEVA LÓGICA: NO PRESENTADO ---
+  void _onNoShow() async {
+    if (_shopId == null) return;
+    try {
+      // Llamamos al nuevo método del servicio
+      await _queueService.markCurrentAsNoShow(_shopId!);
+      
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text("Ticket marcado como NO PRESENTADO"),
+            backgroundColor: Colors.orange,
+            duration: Duration(seconds: 1),
+          )
+        );
+      }
+    } catch (e) {
+      if (mounted) ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("Error: $e")));
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
-    // 1. Estados de carga inicial
     if (_isLoading) return const Scaffold(body: Center(child: CircularProgressIndicator()));
     
     if (_errorMessage != null || _shopId == null) {
@@ -63,6 +84,7 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
     }
 
     return Scaffold(
+      // ... (AppBar igual que antes) ...
       appBar: AppBar(
         title: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -81,7 +103,7 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
           )
         ],
       ),
-      // 2. Stream conectado al servicio que devuelve Stats (NO Snapshot)
+
       body: StreamBuilder<AdminQueueStats>(
         stream: _queueService.getAdminStatsStream(_shopId!),
         builder: (context, snapshot) {
@@ -89,10 +111,8 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
           if (snapshot.hasError) return Center(child: Text("Error: ${snapshot.error}"));
           if (!snapshot.hasData) return const Center(child: CircularProgressIndicator());
 
-          // 3. Datos limpios directamente
           final stats = snapshot.data!;
 
-          // 4. Caso: Cola no inicializada
           if (!stats.exists) {
             return Center(
               child: ElevatedButton(
@@ -103,7 +123,6 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
             );
           }
 
-          // 5. Interfaz Principal
           return Column(
             children: [
               // Dashboard Superior
@@ -164,7 +183,7 @@ class _AdminQueueControlState extends State<AdminQueueControl> {
                               const SizedBox(height: 10),
                               
                               OutlinedButton(
-                                onPressed: stats.hasPeopleWaiting ? _onCallNext : null,
+                                onPressed: stats.hasPeopleWaiting ? _onNoShow : null,
                                 style: OutlinedButton.styleFrom(
                                   foregroundColor: AppColors.alertaRojo,
                                   side: BorderSide(color: stats.hasPeopleWaiting ? AppColors.alertaRojo : Colors.grey.shade300)

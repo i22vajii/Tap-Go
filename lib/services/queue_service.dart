@@ -143,7 +143,7 @@ class QueueService {
       int lastIssued = snapshot.get('last_issued_number') ?? 0;
 
       // Si no hay nadie esperando, no hacemos nada
-      if (current >= lastIssued) return; 
+      if (current >= lastIssued) return;
 
       int servedCount = snapshot.get('served_count') ?? 0;
       int totalSeconds = snapshot.get('total_service_seconds') ?? 0;
@@ -155,24 +155,87 @@ class QueueService {
       int newServedCount = servedCount;
       int newTotalSeconds = totalSeconds;
 
-      // Lógica de tiempo: Si la diferencia es lógica (ej: > 0 y < 20 min), sumamos al promedio
+      // Si current > 0, significa que acabamos de terminar de atender a alguien.
+      // Buscamos ese ticket (el que se va) y lo marcamos como completado.
+      if (current > 0) {
+        final ticketQuery = await _db.collection('tickets')
+            .where('queue_id', isEqualTo: shopId)
+            .where('ticket_number', isEqualTo: current)
+            .limit(1)
+            .get(); // Leemos fuera del lock de escritura, pero dentro del bloque async
+
+        if (ticketQuery.docs.isNotEmpty) {
+          final ticketRef = ticketQuery.docs.first.reference;
+          transaction.update(ticketRef, {
+            'status': 'served', // <--- ESTO ARREGLA TUS ESTADÍSTICAS
+            'closed_at': FieldValue.serverTimestamp(),
+          });
+        }
+      }
+      // -----------------------------------------------------------
+
+      // Lógica de tiempo (Estadísticas globales)
       if (lastCall != null) {
         final diff = DateTime.now().difference(lastCall.toDate()).inSeconds;
+        // Filtramos tiempos absurdos (ej. si se dejó la cola abierta toda la noche)
         if (diff > 0 && diff < 1200) { 
           newServedCount += 1;
           newTotalSeconds += diff;
         }
       } else {
-        // Primera llamada tras reinicio, solo aumentamos el contador sin sumar tiempo
         newServedCount += 1;
       }
 
+      // Actualizamos la cola general al siguiente número
       transaction.update(docRef, {
         'current_number': current + 1,
         'served_count': newServedCount,
         'total_service_seconds': newTotalSeconds,
         'last_call_time': FieldValue.serverTimestamp(),
       });
+    });
+  }
+
+  Future<void> markCurrentAsNoShow(String shopId) async {
+    final queueRef = _db.collection('queues').doc(shopId);
+
+    // 1. Buscamos el ticket que toca ahora (Current + 1)
+    // Lo hacemos fuera de la transacción para obtener la referencia del documento
+    final queueSnap = await queueRef.get();
+    if (!queueSnap.exists) throw "La cola no existe";
+
+    int current = queueSnap.get('current_number') ?? 0;
+    int targetTicketNum = current + 1; // El ticket que vamos a cancelar
+
+    // Buscamos el documento específico en la colección tickets
+    final ticketQuery = await _db.collection('tickets')
+        .where('queue_id', isEqualTo: shopId)
+        .where('ticket_number', isEqualTo: targetTicketNum)
+        .limit(1)
+        .get();
+
+    // 2. Ejecutamos la transacción
+    await _db.runTransaction((transaction) async {
+      DocumentSnapshot qSnapshot = await transaction.get(queueRef);
+      int freshCurrent = qSnapshot.get('current_number') ?? 0;
+
+      // Verificación de seguridad: asegurarnos de que la cola no se ha movido
+      if (freshCurrent != current) return;
+
+      // A. Avanzamos la cola (Solo el número, NO sumamos served_count ni tiempo)
+      transaction.update(queueRef, {
+        'current_number': freshCurrent + 1,
+        'last_call_time': FieldValue.serverTimestamp(), // Reiniciamos el cronómetro para el siguiente
+      });
+
+      // B. Si encontramos el ticket, actualizamos su estado a 'no-show'
+      // Esto es crucial para que luego salga en tus gráficas de abandono
+      if (ticketQuery.docs.isNotEmpty) {
+        transaction.update(ticketQuery.docs.first.reference, {
+          'status': 'no-show',
+          'closed_at': FieldValue.serverTimestamp(),
+        });
+      }
     });
   }
 

@@ -1,7 +1,38 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 class StatsService {
   final FirebaseFirestore _db = FirebaseFirestore.instance;
+  final FirebaseAuth _auth = FirebaseAuth.instance;
+
+  Future<String?> getCurrentUserShopId() async {
+    final user = _auth.currentUser;
+    
+    // Si no hay usuario logueado, retornamos null
+    if (user == null) return null;
+
+    try {
+      final doc = await _db.collection('owners').doc(user.uid).get();
+      if (doc.exists) {
+        return doc.data()?['shopID'];
+      }
+    } catch (e) {
+      print("Error en servicio: $e");
+    }
+    return null;
+  }
+
+  Future<String?> getShopIdForUser(String uid) async {
+    try {
+      final doc = await _db.collection('owners').doc(uid).get();
+      if (doc.exists) {
+        return doc.data()?['shopID'];
+      }
+    } catch (e) {
+      print("Error obteniendo shopID: $e");
+    }
+    return null;
+  }
 
   // 1. KPIs DE LA COLA (Usa el ID del documento 'queues' directamente)
   Stream<Map<String, dynamic>> getQueueKPIs(String shopId) {

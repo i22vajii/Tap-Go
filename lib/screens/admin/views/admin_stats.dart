@@ -1,7 +1,5 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:fl_chart/fl_chart.dart';
-import 'package:firebase_auth/firebase_auth.dart';
 // Asegúrate de que esta ruta es correcta en tu proyecto
 import '../../../config/app_colors.dart';
 import '../../../services/stats_service.dart';
@@ -27,21 +25,13 @@ class _AdminStatisticsState extends State<AdminStatistics> {
   }
 
   Future<void> _loadUserShop() async {
-    final user = FirebaseAuth.instance.currentUser;
-    if (user != null) {
-      try {
-        final doc = await FirebaseFirestore.instance.collection('owners').doc(user.uid).get();
-        if (doc.exists) {
-          setState(() {
-            _shopId = doc.data()?['shopID'];
-            _isLoading = false;
-          });
-        } else {
-           setState(() => _isLoading = false);
-        }
-      } catch (e) {
-        setState(() => _isLoading = false);
-      }
+    final shopId = await _statsService.getCurrentUserShopId();
+
+    if (mounted) {
+      setState(() {
+        _shopId = shopId;
+        _isLoading = false;
+      });
     }
   }
 
@@ -126,7 +116,7 @@ class _AdminStatisticsState extends State<AdminStatistics> {
               ],
             ),
             const SizedBox(height: 12),
-            _kpiCard("Clientes Atendidos Hoy", data['servedCount'] ?? '0', Icons.check_circle, Colors.green, isWide: true),
+            _kpiCard("Clientes Atendidos", data['servedCount'] ?? '0', Icons.check_circle, Colors.green, isWide: true),
           ],
         );
       },
