@@ -1,8 +1,6 @@
 # Tap & Go
 
-Nota: No se si os tendre que pasar la carpeta del proyecto entera... Ahora mismo esta solo lo que es el codigo
-
-## Pasos para crear el proyecto
+## Pasos para crear la apk
 
 ### Instalar flutter
 
@@ -14,44 +12,21 @@ En tu ordenador ejecuta los siguientes comandos:
 
 ---
 
-### Crear proyecto flutter
+### Construir la APK
 
-Entrar en la carpeta en la que querais tener el proyecto:
+Dentro del proyecto de flutter ejecutar el comando:
 
-``flutter create cola_virtual_app``
+``flutter build apk``
 
----
-
-### Vincular con FireBase (Diria que no teneis que hacerlo)
-
-En tu ordenador ejecuta los siguientes comandos:
-
-``npm install -g firebase-tools``
-
-``firebase login``
-
-``dart pub global activate flutterfire_cli``
-
-En la carpeta del proyecto flutter
-``flutterfire configure``
-
----
-
-### Ejecutar aplicacion
-
-En la carpeta del proyecto flutter:
-
-``flutter run -d web-server``
-
-Abrirlo en el navegador con el puerto que te pone
+La apk se encontrara en el directorio: build/app/outputs/flutter-apk
 
 ---
 
 ## Estructura de archivos 
 
-
 - lib/config/app_colors.dart: Contiene la clase AppColors con las constantes de color de la aplicación.
 - lib/config/app_theme.dart: Contiene la clase TapAndGoApp que define el tema general de la aplicación.
+- lib/screens/common/qr_scanner_screen.dart: Contiene la vista para escanear QRs.
 - lib/screens/auth/welcome_screen.dart: La pantalla de bienvenida inicial.
 - lib/screens/auth/owner_login_screen.dart: La pantalla de inicio de sesión para propietarios.
 - lib/screens/client/client_root_screen.dart: La pantalla principal para la vista del cliente.
@@ -62,5 +37,7 @@ Abrirlo en el navegador con el puerto que te pone
 - lib/screens/admin/admin_root_screen.dart: La pantalla principal para la vista del administrador.
 - lib/screens/admin/views/admin_queue_control.dart: La vista para que el administrador controle la cola.
 - lib/screens/admin/views/admin_offers_manager.dart: La vista para que el administrador gestione las ofertas.
+- lib/screens/admin/views/admin_parking_validator: La vista para que el administrador valide los tickets de parking de los clientes.
+- lib/screens/admin/views/admin_stats.dart: La vista para que el administrador visualize las estadisticas de su tienda.
 - lib/main.dart: El punto de entrada de la aplicación.
-- lib/services: Contiene las conexiones a los servicios de firebase
+- lib/services: Contiene las conexiones a los servicios de firebase de cada vista.
